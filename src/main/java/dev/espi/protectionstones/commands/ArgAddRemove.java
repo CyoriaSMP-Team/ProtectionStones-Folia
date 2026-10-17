@@ -177,7 +177,7 @@ public class ArgAddRemove implements PSCommandArg {
                     case "removeowner":
                         PSRegion r = PSRegion.fromLocationGroup(p.getLocation());
                         if (r != null) {
-                            names = new ArrayList<>();
+                            List<String> names = new ArrayList<>();
                             for (UUID uuid : args[0].equalsIgnoreCase("remove") ? r.getMembers() : r.getOwners()) {
                                 names.add(UUIDCache.getNameFromUUID(uuid));
                             }

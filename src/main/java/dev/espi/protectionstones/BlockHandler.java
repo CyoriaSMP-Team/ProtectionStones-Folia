@@ -43,6 +43,7 @@ import org.bukkit.inventory.ItemStack;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.UUID;
 import java.util.Map;
@@ -133,7 +134,7 @@ public class BlockHandler {
                 return; // Preserve the configured behavior: allow placing the block without creating a region or charging.
             }
             e.setCancelled(true);
-            deferPaidPlacement(p, b.getLocation().clone(), e.getBlockPlacedState().copy(), e.getHand(), e.getItemInHand().clone(), blockOptions);
+            deferPaidPlacement(p, b.getLocation().clone(), e.getBlockPlaced().getState().copy(), e.getHand(), e.getItemInHand().clone(), blockOptions);
             return;
         }
 
