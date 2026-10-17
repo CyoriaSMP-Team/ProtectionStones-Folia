@@ -19,12 +19,15 @@ import com.sk89q.worldguard.protection.managers.RegionManager;
 import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import dev.espi.protectionstones.*;
 import dev.espi.protectionstones.utils.WGUtils;
-import org.bukkit.Bukkit;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import org.bukkit.ChatColor;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 
 import java.util.function.Consumer;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 class ArgAdminChangeblock {
 
@@ -48,38 +51,45 @@ class ArgAdminChangeblock {
         String fromBlock = ProtectionStones.getProtectBlockFromAlias(fromBlockAlias).type,
                 toBlock = ProtectionStones.getProtectBlockFromAlias(toBlockAlias).type;
 
-        Consumer<PSRegion> convertFunction = (region) -> {
-            if (region.getType().equals(fromBlock)) {
-                p.sendMessage(ChatColor.GRAY + "Changing " + region.getId() + "...");
-
-                region.setType(ProtectionStones.getBlockOptions(toBlock));
-            }
-        };
-
-        World w = Bukkit.getWorld(world);
+        SchedulerUtil.executeGlobally(() -> {
+        World w = WGUtils.getLoadedWorld(world);
         if (w == null) {
-            return PSL.msg(p, PSL.INVALID_WORLD.msg());
+            PSL.msg(p, PSL.INVALID_WORLD.msg());
+            return;
         }
         RegionManager rgm = WGUtils.getRegionManagerWithWorld(w);
         if (rgm == null) {
-            return PSL.msg(p, ChatColor.GRAY + "The world does not have WorldGuard configured!");
+            PSL.msg(p, ChatColor.GRAY + "The world does not have WorldGuard configured!");
+            return;
         }
+        List<PSRegion> toChange = new ArrayList<>();
         for (ProtectedRegion r : rgm.getRegions().values()) {
             if (ProtectionStones.isPSRegion(r)) {
                 PSRegion pr = PSRegion.fromWGRegion(w, r);
-
-                convertFunction.accept(pr);
+                if (pr.getType().equals(fromBlock)) toChange.add(pr);
 
                 if (pr instanceof PSGroupRegion) {
                     for (PSMergedRegion psmr : ((PSGroupRegion) pr).getMergedRegions()) {
-                        convertFunction.accept(psmr);
+                        if (psmr.getType().equals(fromBlock)) toChange.add(psmr);
                     }
                 }
             }
         }
 
-        p.sendMessage(ChatColor.GRAY + "Done!");
+        if (toChange.isEmpty()) {
+            SchedulerUtil.sendMessage(p, ChatColor.GRAY + "Done!");
+            return;
+        }
+        AtomicInteger remaining = new AtomicInteger(toChange.size());
+        for (PSRegion region : toChange) {
+            SchedulerUtil.executeForLocation(region.getProtectBlockLocation(), () -> {
+                SchedulerUtil.sendMessage(p, ChatColor.GRAY + "Changing " + region.getId() + "...");
+                region.setType(ProtectionStones.getBlockOptions(toBlock));
+                if (remaining.decrementAndGet() == 0) SchedulerUtil.sendMessage(p, ChatColor.GRAY + "Done!");
+            });
+        }
 
+        });
         return true;
     }
 }

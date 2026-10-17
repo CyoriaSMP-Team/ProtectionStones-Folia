@@ -18,6 +18,7 @@ package dev.espi.protectionstones.commands;
 import com.sk89q.worldguard.bukkit.WorldGuardPlugin;
 import dev.espi.protectionstones.*;
 import dev.espi.protectionstones.utils.LimitUtil;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import dev.espi.protectionstones.utils.UUIDCache;
 import dev.espi.protectionstones.utils.WGUtils;
 import org.bukkit.Bukkit;
@@ -77,8 +78,7 @@ public class ArgAddRemove implements PSCommandArg {
         UUID addPlayerUuid = UUIDCache.getUUIDFromName(args[1]);
         String addPlayerName = UUIDCache.getNameFromUUID(addPlayerUuid);
 
-        // getting player regions is slow, so run it async
-        Bukkit.getServer().getScheduler().runTaskAsynchronously(ProtectionStones.getInstance(), () -> {
+        SchedulerUtil.executeForEntity(p, () -> {
             List<PSRegion> regions;
 
             // obtain region list that player is being added to or removed from
@@ -129,7 +129,7 @@ public class ArgAddRemove implements PSCommandArg {
                     }
 
                     // add to WorldGuard profile cache
-                    Bukkit.getScheduler().runTaskAsynchronously(ProtectionStones.getInstance(), () -> UUIDCache.storeWGProfile(addPlayerUuid, addPlayerName));
+                    SchedulerUtil.runAsync(() -> UUIDCache.storeWGProfile(addPlayerUuid, addPlayerName));
 
                 } else if ((operationType.equals("remove") && r.isMember(addPlayerUuid))
                         || (operationType.equals("removeowner") && r.isOwner(addPlayerUuid))) {
@@ -171,13 +171,7 @@ public class ArgAddRemove implements PSCommandArg {
                 switch (args[0].toLowerCase()) {
                     case "add":
                     case "addowner":
-                        List<String> names = new ArrayList<>();
-                        for (Player pAdd : Bukkit.getOnlinePlayers()) {
-                            if (p.canSee(pAdd)) { // check if the player is not hidden
-                                names.add(pAdd.getName());
-                            }
-                        }
-                        ret.addAll(names);
+                        ret.addAll(UUIDCache.getOnlinePlayersSnapshot());
                         break;
                     case "remove":
                     case "removeowner":
@@ -206,7 +200,7 @@ public class ArgAddRemove implements PSCommandArg {
 
     public boolean determinePlayerSurpassedLimit(Player commandSender, List<PSRegion> regionsToBeAddedTo, PSPlayer addedPlayer) {
 
-        if (addedPlayer.getPlayer() == null && !ProtectionStones.getInstance().isLuckPermsSupportEnabled()) { // offline player
+        if (!UUIDCache.isOnline(addedPlayer.getUuid()) && !ProtectionStones.getInstance().isLuckPermsSupportEnabled()) { // offline player
             if (ProtectionStones.getInstance().getConfigOptions().allowAddownerForOfflinePlayersWithoutLp) {
                 // bypass config option
                 return false;

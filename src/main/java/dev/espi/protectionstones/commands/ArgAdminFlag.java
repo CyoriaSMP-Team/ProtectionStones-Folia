@@ -23,7 +23,7 @@ import dev.espi.protectionstones.PSRegion;
 import dev.espi.protectionstones.ProtectionStones;
 import dev.espi.protectionstones.utils.UUIDCache;
 import dev.espi.protectionstones.utils.WGUtils;
-import org.bukkit.Bukkit;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 
@@ -35,40 +35,59 @@ class ArgAdminFlag {
             return true;
         }
 
-        String flag, value = "", gee = "";
-        World w = Bukkit.getWorld(args[2]);
-        if (w == null)
-            return PSL.msg(p, PSL.INVALID_WORLD.msg());
-
+        if (args.length > 3 && args[3].equalsIgnoreCase("-g") && args.length < 6) {
+            return PSL.msg(p, ArgAdmin.getFlagHelp());
+        }
+        final String selectedFlag;
+        final String selectedValue;
+        final String selectedGroup;
         if (args[3].equalsIgnoreCase("-g")) {
-            flag = args[5];
-            for (int i = 6; i < args.length; i++) value += args[i] + " ";
-            gee = args[4];
+            selectedFlag = args[5];
+            StringBuilder builder = new StringBuilder();
+            for (int i = 6; i < args.length; i++) builder.append(args[i]).append(' ');
+            selectedValue = builder.toString();
+            selectedGroup = args[4];
         } else {
-            flag = args[3];
-            for (int i = 4; i < args.length; i++) value += args[i] + " ";
+            selectedFlag = args[3];
+            StringBuilder builder = new StringBuilder();
+            for (int i = 4; i < args.length; i++) builder.append(args[i]).append(' ');
+            selectedValue = builder.toString();
+            selectedGroup = "";
         }
 
-        if (WGUtils.getFlagRegistry().get(flag) == null)
+        if (WGUtils.getFlagRegistry().get(selectedFlag) == null)
             return PSL.msg(p, PSL.FLAG_NOT_SET.msg());
 
-        final String fValue = value, fGee = gee;
+        Runnable apply = () -> {
+        World w = WGUtils.getLoadedWorld(args[2]);
+        if (w == null) {
+            PSL.msg(p, PSL.INVALID_WORLD.msg());
+            return;
+        }
         RegionManager rgm = WGUtils.getRegionManagerWithWorld(w);
+        if (rgm == null) {
+            PSL.msg(p, PSL.INVALID_WORLD.msg());
+            return;
+        }
         for (ProtectedRegion r : rgm.getRegions().values()) {
-            if (ProtectionStones.isPSRegion(r) && PSRegion.fromWGRegion(w, r) != null) {
-                String flagValue = fValue;
+            PSRegion psRegion = PSRegion.fromWGRegion(w, r);
+            if (ProtectionStones.isPSRegion(r) && psRegion != null) {
+                String flagValue = selectedValue;
 
                 // apply %player% placeholder
-                if (FlagHandler.getPlayerPlaceholderFlags().contains(flag) && (!r.getOwners().getUniqueIds().isEmpty())) {
+                if (FlagHandler.getPlayerPlaceholderFlags().contains(selectedFlag) && (!r.getOwners().getUniqueIds().isEmpty())) {
                     String name = UUIDCache.getNameFromUUID(r.getOwners().getUniqueIds().stream().findFirst().get());
                     if (name != null) {
                         flagValue = flagValue.replace("%player%", name);
                     }
                 }
 
-                ArgFlag.setFlag(PSRegion.fromWGRegion(w, r), p, flag, flagValue.trim(), fGee);
+                ArgFlag.setFlag(psRegion, p, selectedFlag, flagValue.trim(), selectedGroup);
             }
         }
+        };
+        if (p instanceof org.bukkit.entity.Player player) SchedulerUtil.executeForEntity(player, apply);
+        else SchedulerUtil.executeGlobally(apply);
         return true;
     }
 }

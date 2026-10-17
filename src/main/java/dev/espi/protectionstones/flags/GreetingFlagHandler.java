@@ -23,9 +23,9 @@ import com.sk89q.worldguard.session.Session;
 import com.sk89q.worldguard.session.handler.FlagValueChangeHandler;
 import com.sk89q.worldguard.session.handler.Handler;
 import dev.espi.protectionstones.FlagHandler;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.TextComponent;
-import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 
 // greeting-action flag
@@ -50,8 +50,9 @@ public class GreetingFlagHandler extends FlagValueChangeHandler<String> {
 
     @Override
     protected boolean onSetValue(LocalPlayer localPlayer, Location location, Location location1, ApplicableRegionSet applicableRegionSet, String currentValue, String lastValue, MoveType moveType) {
-        if (currentValue != null && !currentValue.equals(lastValue) && Bukkit.getPlayer(localPlayer.getUniqueId()) != null) {
-            Bukkit.getPlayer(localPlayer.getUniqueId()).spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(ChatColor.translateAlternateColorCodes('&', currentValue)));
+        if (currentValue != null && !currentValue.equals(lastValue)) {
+            TextComponent message = new TextComponent(ChatColor.translateAlternateColorCodes('&', currentValue));
+            SchedulerUtil.executeForPlayerId(localPlayer.getUniqueId(), player -> player.spigot().sendMessage(ChatMessageType.ACTION_BAR, message));
         }
         return true;
     }

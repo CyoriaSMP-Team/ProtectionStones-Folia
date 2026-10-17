@@ -19,6 +19,7 @@ import com.sk89q.worldguard.protection.managers.RegionManager;
 import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import dev.espi.protectionstones.utils.MiscUtil;
 import dev.espi.protectionstones.utils.WGUtils;
+import dev.espi.protectionstones.utils.UUIDCache;
 import net.milkbowl.vault.economy.EconomyResponse;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
@@ -125,6 +126,8 @@ public class PSPlayer {
     }
 
     public String getName() {
+        String cachedName = UUIDCache.getNameFromUUID(uuid);
+        if (cachedName != null) return cachedName;
         return getOfflinePlayer().getName();
     }
 
@@ -206,11 +209,12 @@ public class PSPlayer {
         HashMap<PSProtectBlock, Integer> regionLimits = new HashMap<>();
 
         List<String> permissions;
+        List<String> cachedPermissions = UUIDCache.getEffectivePermissions(uuid);
 
-        if (getPlayer() != null) {
-            permissions = getPlayer().getEffectivePermissions().stream().map(PermissionAttachmentInfo::getPermission).collect(Collectors.toList());
-        } else if (getOfflinePlayer().getPlayer() != null) {
-            permissions = getOfflinePlayer().getPlayer().getEffectivePermissions().stream().map(PermissionAttachmentInfo::getPermission).collect(Collectors.toList());
+        if (p != null) {
+            permissions = p.getEffectivePermissions().stream().map(PermissionAttachmentInfo::getPermission).collect(Collectors.toList());
+        } else if (cachedPermissions != null) {
+            permissions = cachedPermissions;
         } else if (ProtectionStones.getInstance().isLuckPermsSupportEnabled()) {
             // use luckperms to obtain all of an offline player's permissions (vault and spigot api are unable to do this)
             try {
@@ -247,8 +251,11 @@ public class PSPlayer {
      */
 
     public int getGlobalRegionLimits() {
-        if (getPlayer() != null) {
-            return MiscUtil.getPermissionNumber(getPlayer(), "protectionstones.limit.", -1);
+        List<String> cachedPermissions = UUIDCache.getEffectivePermissions(uuid);
+        if (p != null) {
+            return MiscUtil.getPermissionNumber(p, "protectionstones.limit.", -1);
+        } else if (cachedPermissions != null) {
+            return MiscUtil.getPermissionNumber(cachedPermissions, "protectionstones.limit.", -1);
         } else if (ProtectionStones.getInstance().isLuckPermsSupportEnabled()) {
             // use LuckPerms to obtain all of an offline player's permissions (vault and spigot api are unable to do this)
             try {
@@ -323,23 +330,19 @@ public class PSPlayer {
         Set<String> regionIdAdded = regions.stream().map(r -> w.getName() + " " + r.getId()).collect(Collectors.toSet());
 
         // obtain cross-world named worlds
-        ProtectionStones.regionNameToID.forEach((rw, rs) -> {
-            World world = Bukkit.getWorld(rw);
-            RegionManager rm = WGUtils.getRegionManagerWithWorld(world);
-            if (rm != null) {
-                rs.values().forEach(rIds -> rIds.forEach(rId -> {
-
-                    ProtectedRegion r = rm.getRegion(rId);
-                    if (r != null && r.getOwners().contains(uuid) && ProtectionStones.isPSRegion(r)) {
-                        // check if it has already been added
-                        String setId = world.getName() + " " + r.getId();
-                        if (!world.getName().equals(w.getName()) || !regionIdAdded.contains(setId)) {
-                            regions.add(PSRegion.fromWGRegion(world, r));
-                            regionIdAdded.add(setId);
-                        }
+        WGUtils.getAllRegionManagers().forEach((world, rm) -> {
+            Map<String, ? extends List<String>> namedRegions = ProtectionStones.regionNameToID.get(world.getUID());
+            if (namedRegions == null) return;
+            namedRegions.values().forEach(rIds -> rIds.forEach(rId -> {
+                ProtectedRegion r = rm.getRegion(rId);
+                if (r != null && r.getOwners().contains(uuid) && ProtectionStones.isPSRegion(r)) {
+                    String setId = world.getName() + " " + r.getId();
+                    if (!world.getName().equals(w.getName()) || !regionIdAdded.contains(setId)) {
+                        regions.add(PSRegion.fromWGRegion(world, r));
+                        regionIdAdded.add(setId);
                     }
-                }));
-            }
+                }
+            }));
         });
 
         return regions;

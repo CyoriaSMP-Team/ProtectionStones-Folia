@@ -20,6 +20,7 @@ import com.sk89q.worldguard.protection.managers.RemovalStrategy;
 import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import dev.espi.protectionstones.*;
 import dev.espi.protectionstones.utils.WGUtils;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.World;
@@ -31,8 +32,9 @@ import java.util.List;
 
 class ArgAdminRecreate {
     static boolean argumentAdminRecreate(CommandSender s, String[] args) {
-        s.sendMessage(ChatColor.YELLOW + "Recreating...");
+        SchedulerUtil.sendMessage(s, ChatColor.YELLOW + "Recreating...");
 
+        SchedulerUtil.executeGlobally(() -> {
         HashMap<World, RegionManager> m = WGUtils.getAllRegionManagers();
         for (World w : m.keySet()) {
             RegionManager rgm = m.get(w);
@@ -62,7 +64,8 @@ class ArgAdminRecreate {
             }
         }
 
-        s.sendMessage(ChatColor.YELLOW + "Done.");
+        SchedulerUtil.sendMessage(s, ChatColor.YELLOW + "Done.");
+        });
         return true;
     }
 }

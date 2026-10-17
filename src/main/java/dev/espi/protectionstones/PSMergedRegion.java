@@ -385,9 +385,7 @@ public class PSMergedRegion extends PSRegion {
             return false;
         }
 
-        if (deleteBlock && !this.isHidden()) {
-            this.getProtectBlock().setType(Material.AIR);
-        }
+        if (deleteBlock) removeVisibleProtectBlock();
 
         try {
             WGMerge.unmergeRegion(getWorld(), getWGRegionManager(), this);

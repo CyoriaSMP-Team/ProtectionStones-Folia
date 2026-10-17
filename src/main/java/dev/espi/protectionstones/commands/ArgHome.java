@@ -19,6 +19,7 @@ import dev.espi.protectionstones.*;
 import dev.espi.protectionstones.utils.ChatUtil;
 import dev.espi.protectionstones.utils.MiscUtil;
 import dev.espi.protectionstones.utils.TextGUI;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.ComponentBuilder;
 import net.md_5.bungee.api.chat.HoverEvent;
@@ -31,10 +32,11 @@ import org.bukkit.util.StringUtil;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ArgHome implements PSCommandArg {
 
-    private static HashMap<UUID, List<String>> tabCache = new HashMap<>();
+    private static final Map<UUID, List<String>> tabCache = new ConcurrentHashMap<>();
 
     @Override
     public List<String> getNames() {
@@ -80,7 +82,7 @@ public class ArgHome implements PSCommandArg {
                 // cache home regions
                 tabCache.put(p.getUniqueId(), regionNames);
 
-                Bukkit.getScheduler().runTaskLater(ProtectionStones.getInstance(), () -> {
+                SchedulerUtil.laterForEntity(p, () -> {
                     tabCache.remove(p.getUniqueId());
                 }, 200); // remove cache after 10 seconds
             }
@@ -128,7 +130,7 @@ public class ArgHome implements PSCommandArg {
         if (args.length != 2 && args.length != 1)
             return PSL.msg(p, PSL.HOME_HELP.msg());
 
-        Bukkit.getScheduler().runTaskAsynchronously(ProtectionStones.getInstance(), () -> {
+        SchedulerUtil.executeForEntity(p, () -> {
             PSPlayer psp = PSPlayer.fromPlayer(p);
             if (args.length == 1) {
                 // just "/ps home"

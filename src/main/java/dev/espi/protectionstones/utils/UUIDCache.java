@@ -17,14 +17,60 @@ package dev.espi.protectionstones.utils;
 
 import com.sk89q.worldguard.WorldGuard;
 import com.sk89q.worldguard.util.profile.Profile;
+import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
+import org.bukkit.permissions.PermissionAttachmentInfo;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.UUID;
 
 public class UUIDCache {
-    private static Map<UUID, String> uuidToName = new HashMap<>();
-    private static Map<String, UUID> nameToUUID = new HashMap<>();
+    private static final ConcurrentMap<UUID, String> uuidToName = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<String, UUID> nameToUUID = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<UUID, String> onlinePlayers = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<UUID, String> onlinePlayerNames = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<UUID, java.util.List<String>> effectivePermissions = new ConcurrentHashMap<>();
+
+    public static void refreshOnlinePlayers() {
+        onlinePlayers.clear();
+        onlinePlayerNames.clear();
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            SchedulerUtil.executeForEntity(player, () -> setOnline(player));
+        }
+    }
+
+    public static void setOnline(Player player) {
+        onlinePlayers.put(player.getUniqueId(), player.getName());
+        onlinePlayerNames.put(player.getUniqueId(), player.getName());
+        effectivePermissions.put(player.getUniqueId(), player.getEffectivePermissions().stream()
+                .map(PermissionAttachmentInfo::getPermission).toList());
+        storeUUIDNamePair(player.getUniqueId(), player.getName());
+    }
+
+    public static void setOffline(UUID uuid) {
+        if (uuid != null) {
+            onlinePlayers.remove(uuid);
+            onlinePlayerNames.remove(uuid);
+            effectivePermissions.remove(uuid);
+        }
+    }
+
+    public static boolean isOnline(UUID uuid) {
+        return uuid != null && onlinePlayers.containsKey(uuid);
+    }
+
+    public static java.util.List<String> getOnlinePlayersSnapshot() {
+        return new java.util.ArrayList<>(onlinePlayers.values());
+    }
+
+    public static java.util.List<String> getOnlinePlayerNames() {
+        return new java.util.ArrayList<>(onlinePlayerNames.values());
+    }
+
+    public static java.util.List<String> getEffectivePermissions(UUID uuid) {
+        return effectivePermissions.get(uuid);
+    }
 
     // toLowerCase for case insensitive search
 
@@ -56,12 +102,14 @@ public class UUIDCache {
 
     public static void removeUUID(UUID uuid) {
         if (uuid == null) return;
-        uuidToName.remove(uuid);
+        String name = uuidToName.remove(uuid);
+        if (name != null) nameToUUID.remove(name.toLowerCase(), uuid);
     }
 
     public static void removeName(String name) {
         if (name == null) return;
-        nameToUUID.remove(name.toLowerCase());
+        UUID uuid = nameToUUID.remove(name.toLowerCase());
+        if (uuid != null) uuidToName.remove(uuid, name);
     }
 
     public static void storeWGProfile(UUID uuid, String name) {

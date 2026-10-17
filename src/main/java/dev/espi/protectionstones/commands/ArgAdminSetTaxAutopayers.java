@@ -21,6 +21,7 @@ import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import dev.espi.protectionstones.PSL;
 import dev.espi.protectionstones.PSRegion;
 import dev.espi.protectionstones.ProtectionStones;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import dev.espi.protectionstones.utils.WGUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -34,21 +35,27 @@ class ArgAdminSetTaxAutopayers {
 
         PSL.msg(s, ChatColor.GRAY + "Scanning through regions, and setting tax autopayers for regions that don't have one...");
 
-        Bukkit.getScheduler().runTaskAsynchronously(ProtectionStones.getInstance(), () -> {
+        SchedulerUtil.executeGlobally(() -> {
+            java.util.List<String> updates = new java.util.ArrayList<>();
             WGUtils.getAllRegionManagers().forEach((w, rgm) -> {
                 for (ProtectedRegion r : rgm.getRegions().values()) {
                     PSRegion psr = PSRegion.fromWGRegion(w, r);
 
                     if (psr != null && psr.getTypeOptions() != null && psr.getTypeOptions().taxPeriod != -1 && psr.getTaxAutopayer() == null) {
                         if (psr.getOwners().size() >= 1) {
-                            PSL.msg(s, ChatColor.GRAY + "Configured tax autopayer to be " + psr.getOwners().get(0).toString() + " for region " + psr.getId());
+                            updates.add(ChatColor.GRAY + "Configured tax autopayer to be " + psr.getOwners().get(0).toString() + " for region " + psr.getId());
                             psr.setTaxAutopayer(psr.getOwners().get(0));
                         }
                     }
 
                 }
             });
-            PSL.msg(s, ChatColor.GREEN + "Complete!");
+            Runnable sendMessages = () -> {
+                updates.forEach(s::sendMessage);
+                PSL.msg(s, ChatColor.GREEN + "Complete!");
+            };
+            if (s instanceof org.bukkit.entity.Player player) SchedulerUtil.executeForEntity(player, sendMessages);
+            else SchedulerUtil.executeGlobally(sendMessages);
         });
 
         return true;

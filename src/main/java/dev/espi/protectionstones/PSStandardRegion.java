@@ -61,20 +61,13 @@ public class PSStandardRegion extends PSRegion {
 
     @Override
     public void setName(String name) {
-        HashMap<String, ArrayList<String>> m = ProtectionStones.regionNameToID.get(getWorld().getUID());
-        if (m == null) { // if the world has not been added
-            ProtectionStones.regionNameToID.put(getWorld().getUID(), new HashMap<>());
-            m = ProtectionStones.regionNameToID.get(getWorld().getUID());
-        }
+        java.util.concurrent.ConcurrentMap<String, java.util.concurrent.CopyOnWriteArrayList<String>> m =
+                ProtectionStones.regionNameToID.computeIfAbsent(getWorld().getUID(), key -> new java.util.concurrent.ConcurrentHashMap<>());
         if (m.get(getName()) != null) {
             m.get(getName()).remove(getId());
         }
         if (name != null) {
-            if (m.containsKey(name)) {
-                m.get(name).add(getId());
-            } else {
-                m.put(name, new ArrayList<>(Collections.singletonList(getId())));
-            }
+            m.computeIfAbsent(name, key -> new java.util.concurrent.CopyOnWriteArrayList<>()).addIfAbsent(getId());
         }
         wgregion.setFlag(FlagHandler.PS_NAME, name);
     }
@@ -450,11 +443,8 @@ public class PSStandardRegion extends PSRegion {
             if (getRentStage() == RentStage.LOOKING_FOR_TENANT || getRentStage() == RentStage.RENTING) {
 
                 if (getTenant() != null) {
-                    PSPlayer tenant = PSPlayer.fromUUID(getTenant());
-                    if (tenant.getOfflinePlayer().isOnline()) {
-                        PSL.msg(Bukkit.getPlayer(getTenant()), PSL.RENT_TENANT_STOPPED_TENANT.msg()
-                                .replace("%region%", getName() != null ? getName() : getId()));
-                    }
+                    dev.espi.protectionstones.utils.SchedulerUtil.sendToPlayer(getTenant(), PSL.RENT_TENANT_STOPPED_TENANT.msg()
+                            .replace("%region%", getName() != null ? getName() : getId()));
                 }
 
                 removeRenting(); // this needs to be called before removing the player, since it adds the player back
@@ -503,13 +493,11 @@ public class PSStandardRegion extends PSRegion {
         }
 
         // set the physical block to air
-        if (deleteBlock && !this.isHidden()) {
-            this.getProtectBlock().setType(Material.AIR);
-        }
+        if (deleteBlock) removeVisibleProtectBlock();
 
         // remove name from cache
         if (getName() != null) {
-            HashMap<String, ArrayList<String>> rIds = ProtectionStones.regionNameToID.get(getWorld().getUID());
+            java.util.concurrent.ConcurrentMap<String, java.util.concurrent.CopyOnWriteArrayList<String>> rIds = ProtectionStones.regionNameToID.get(getWorld().getUID());
             if (rIds != null && rIds.containsKey(getName())) {
                 if (rIds.get(getName()).size() == 1) {
                     rIds.remove(getName());

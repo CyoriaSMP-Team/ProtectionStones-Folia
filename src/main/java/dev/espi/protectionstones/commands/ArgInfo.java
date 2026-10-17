@@ -224,7 +224,7 @@ public class ArgInfo implements PSCommandArg {
         } else {
             for (UUID uuid : owners.getUniqueIds()) {
                 String name = UUIDCache.getNameFromUUID(uuid);
-                if (name == null) name = Bukkit.getOfflinePlayer(uuid).getName();
+                if (name == null) name = uuid.toString();
                 msg.append(name).append(", ");
             }
             for (String name : owners.getPlayers()) { // legacy purposes

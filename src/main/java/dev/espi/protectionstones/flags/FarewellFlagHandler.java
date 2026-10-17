@@ -27,11 +27,10 @@ import com.sk89q.worldguard.session.handler.Handler;
 import dev.espi.protectionstones.FlagHandler;
 import dev.espi.protectionstones.PSRegion;
 import dev.espi.protectionstones.ProtectionStones;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.TextComponent;
-import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
-import org.bukkit.entity.Player;
 
 // farewell-action flag
 public class FarewellFlagHandler extends FlagValueChangeHandler<String> {
@@ -54,25 +53,24 @@ public class FarewellFlagHandler extends FlagValueChangeHandler<String> {
 
     @Override
     protected boolean onSetValue(LocalPlayer localPlayer, Location from, Location to, ApplicableRegionSet toSet, String currentValue, String lastValue, MoveType moveType) {
-        Player p = Bukkit.getPlayer(localPlayer.getUniqueId());
-
         // the greeting action flag for the other region should show instead if it is set
         for (ProtectedRegion r : toSet.getRegions()) {
             if (r.getFlag(FlagHandler.GREET_ACTION) != null) {
                 return true;
             }
         }
-        if (p != null && lastValue != null && !lastValue.equals(currentValue)) {
-            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(ChatColor.translateAlternateColorCodes('&', lastValue)));
+        if (lastValue != null && !lastValue.equals(currentValue)) {
+            TextComponent message = new TextComponent(ChatColor.translateAlternateColorCodes('&', lastValue));
+            SchedulerUtil.executeForPlayerId(localPlayer.getUniqueId(), player -> player.spigot().sendMessage(ChatMessageType.ACTION_BAR, message));
         }
         return true;
     }
 
     @Override
     protected boolean onAbsentValue(LocalPlayer localPlayer, Location location, Location location1, ApplicableRegionSet applicableRegionSet, String lastValue, MoveType moveType) {
-        Player p = Bukkit.getPlayer(localPlayer.getUniqueId());
-        if (p != null && lastValue != null) {
-            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(ChatColor.translateAlternateColorCodes('&', lastValue)));
+        if (lastValue != null) {
+            TextComponent message = new TextComponent(ChatColor.translateAlternateColorCodes('&', lastValue));
+            SchedulerUtil.executeForPlayerId(localPlayer.getUniqueId(), player -> player.spigot().sendMessage(ChatMessageType.ACTION_BAR, message));
         }
         return true;
     }

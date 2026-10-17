@@ -19,14 +19,20 @@ import dev.espi.protectionstones.*;
 import dev.espi.protectionstones.utils.MiscUtil;
 import dev.espi.protectionstones.utils.TextGUI;
 import dev.espi.protectionstones.utils.UUIDCache;
+import dev.espi.protectionstones.utils.SchedulerUtil;
+import dev.espi.protectionstones.utils.WGUtils;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.ComponentBuilder;
 import net.md_5.bungee.api.chat.HoverEvent;
 import net.md_5.bungee.api.chat.TextComponent;
 import net.milkbowl.vault.economy.EconomyResponse;
+import com.sk89q.worldguard.protection.managers.RegionManager;
+import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.OfflinePlayer;
+import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.util.StringUtil;
@@ -104,7 +110,7 @@ public class ArgTax implements PSCommandArg {
 
     public boolean taxInfo(String[] args, HashMap<String, String> flags, PSPlayer p) {
         if (args.length == 2) { // /ps tax info
-            Bukkit.getScheduler().runTaskAsynchronously(ProtectionStones.getInstance(), () -> {
+            SchedulerUtil.executeForEntity(p.getPlayer(), () -> {
                 int pageNum = (flags.get("-p") == null || !MiscUtil.isValidInteger(flags.get("-p")) ? 0 : Integer.parseInt(flags.get("-p"))-1);
 
                 List<TextComponent> entries = new ArrayList<>();
@@ -176,15 +182,34 @@ public class ArgTax implements PSCommandArg {
         // must be higher than or equal to zero
         if (payment <= 0)
             return PSL.msg(p, PAY_HELP);
-        // player must have this amount of money
-        if (!p.hasAmount(payment))
-            return PSL.msg(p, PSL.NOT_ENOUGH_MONEY.msg().replace("%price%", String.format("%.2f", payment)));
+        UUID playerId = p.getUuid();
+        UUID worldId = r.getWorld().getUID();
+        String regionId = r.getId();
+        SchedulerUtil.executeGlobally(() -> {
+            World world = WGUtils.getLoadedWorld(worldId);
+            RegionManager manager = WGUtils.getRegionManagerWithWorld(world);
+            ProtectedRegion worldGuardRegion = manager == null ? null : manager.getRegion(regionId);
+            PSRegion current = worldGuardRegion == null ? null : PSRegion.fromWGRegion(world, worldGuardRegion);
+            if (current == null || !current.isOwner(playerId)) {
+                SchedulerUtil.sendToPlayer(playerId, PSL.NOT_OWNER.msg());
+                return;
+            }
 
-        // pay tax amount
-        EconomyResponse res = r.payTax(p, payment);
-        PSL.msg(p, PSL.TAX_PAID.msg()
-                .replace("%amount%", String.format("%.2f", res.amount))
-                .replace("%region%", r.getName() == null ? r.getId() : r.getName() + "(" + r.getId() + ")"));
+            OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(playerId);
+            if (!ProtectionStones.getInstance().getVaultEconomy().has(offlinePlayer, payment)) {
+                SchedulerUtil.sendToPlayer(playerId, PSL.NOT_ENOUGH_MONEY.msg().replace("%price%", String.format("%.2f", payment)));
+                return;
+            }
+
+            EconomyResponse response = current.payTax(PSPlayer.fromUUID(playerId), payment);
+            if (response == null || !response.transactionSuccess()) {
+                SchedulerUtil.sendToPlayer(playerId, response == null ? PSL.NOT_ENOUGH_MONEY.msg() : response.errorMessage);
+                return;
+            }
+            SchedulerUtil.sendToPlayer(playerId, PSL.TAX_PAID.msg()
+                    .replace("%amount%", String.format("%.2f", response.amount))
+                    .replace("%region%", current.getName() == null ? current.getId() : current.getName() + "(" + current.getId() + ")"));
+        });
         return true;
     }
 

@@ -25,6 +25,7 @@ import dev.espi.protectionstones.commands.PSCommandArg;
 import dev.espi.protectionstones.placeholders.PSPlaceholderExpansion;
 import dev.espi.protectionstones.utils.BlockUtil;
 import dev.espi.protectionstones.utils.RecipeUtil;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import dev.espi.protectionstones.utils.upgrade.LegacyUpgrade;
 import dev.espi.protectionstones.utils.UUIDCache;
 import dev.espi.protectionstones.utils.WGUtils;
@@ -48,6 +49,9 @@ import net.luckperms.api.LuckPerms;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Logger;
 
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -62,7 +66,7 @@ public class ProtectionStones extends JavaPlugin {
     // change this when the config version goes up
     public static final int CONFIG_VERSION = 16;
 
-    private boolean debug = false;
+    private volatile boolean debug = false;
 
     public static File configLocation, blockDataFolder;
     public static CommentedFileConfig config;
@@ -74,12 +78,12 @@ public class ProtectionStones extends JavaPlugin {
 
     // all configuration file options are stored in here
     private PSConfig configOptions;
-    static HashMap<String, PSProtectBlock> protectionStonesOptions = new HashMap<>();
+    static final ConcurrentMap<String, PSProtectBlock> protectionStonesOptions = new ConcurrentHashMap<>();
 
 
     // ps alias to id cache
     // <world-name, <alias, [ids]>>
-    static HashMap<UUID, HashMap<String, ArrayList<String>>> regionNameToID = new HashMap<>();
+    static final ConcurrentMap<UUID, ConcurrentMap<String, CopyOnWriteArrayList<String>>> regionNameToID = new ConcurrentHashMap<>();
 
     // vault economy integration
     private boolean vaultSupportEnabled = false;
@@ -92,7 +96,7 @@ public class ProtectionStones extends JavaPlugin {
     private boolean placeholderAPISupportEnabled = false;
 
     // ps toggle/on/off list
-    public static Set<UUID> toggleList = new HashSet<>();
+    public static Set<UUID> toggleList = ConcurrentHashMap.newKeySet();
 
     /* ~~~~~~~~~~ Instance methods ~~~~~~~~~~~~ */
 
@@ -318,10 +322,10 @@ public class ProtectionStones extends JavaPlugin {
      */
 
     public static boolean isPSNameAlreadyUsed(String name) {
-        for (UUID worldUid : regionNameToID.keySet()) {
-            RegionManager rgm = WGUtils.getRegionManagerWithWorld(Bukkit.getWorld(worldUid));
-
-            List<String> l = regionNameToID.get(worldUid).get(name);
+        for (Map.Entry<World, RegionManager> worldEntry : WGUtils.getAllRegionManagers().entrySet()) {
+            RegionManager rgm = worldEntry.getValue();
+            Map<String, ? extends List<String>> names = regionNameToID.get(worldEntry.getKey().getUID());
+            List<String> l = names == null ? null : names.get(name);
             if (l == null) continue;
             for (int i = 0; i < l.size(); i++) { // remove outdated cache
                 if (rgm.getRegion(l.get(i)) == null) {
@@ -555,6 +559,7 @@ public class ProtectionStones extends JavaPlugin {
         Config.setInsertionOrderPreserved(true); // make sure that config upgrades aren't a complete mess
 
         plugin = this;
+        UUIDCache.refreshOnlinePlayers();
         configLocation = new File(this.getDataFolder() + "/config.toml");
         blockDataFolder = new File(this.getDataFolder() + "/blocks");
 
@@ -609,6 +614,7 @@ public class ProtectionStones extends JavaPlugin {
         }
 
         // load configuration
+        WGUtils.refreshLoadedWorlds();
         loadConfig(false);
 
         // register protectionstones.flags.edit.[flag] permission
@@ -620,14 +626,14 @@ public class ProtectionStones extends JavaPlugin {
         HashMap<World, RegionManager> regionManagers = WGUtils.getAllRegionManagers();
         for (World w : regionManagers.keySet()) {
             RegionManager rgm = regionManagers.get(w);
-            HashMap<String, ArrayList<String>> m = new HashMap<>();
+            ConcurrentMap<String, CopyOnWriteArrayList<String>> m = new ConcurrentHashMap<>();
             for (ProtectedRegion r : rgm.getRegions().values()) {
                 String name = r.getFlag(FlagHandler.PS_NAME);
                 if (isPSRegion(r) && name != null) {
                     if (m.containsKey(name)) {
                         m.get(name).add(r.getId());
                     } else {
-                        m.put(name, new ArrayList<>(Collections.singletonList(r.getId())));
+                        m.put(name, new CopyOnWriteArrayList<>(Collections.singletonList(r.getId())));
                     }
                 }
             }
@@ -636,11 +642,14 @@ public class ProtectionStones extends JavaPlugin {
 
         // uuid cache
         getLogger().info("Building UUID cache... (if slow change async-load-uuid-cache in the config to true)");
-        if (configOptions.asyncLoadUUIDCache) { // async load
-            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+        if (configOptions.asyncLoadUUIDCache) { // read Bukkit player data in the global context, then update the cache asynchronously
+            SchedulerUtil.executeGlobally(() -> {
+                Map<UUID, String> playerNames = new HashMap<>();
                 for (OfflinePlayer op : Bukkit.getOfflinePlayers()) {
-                    UUIDCache.storeUUIDNamePair(op.getUniqueId(), op.getName());
+                    String playerName = op.getName();
+                    if (playerName != null) playerNames.put(op.getUniqueId(), playerName);
                 }
+                SchedulerUtil.runAsync(() -> playerNames.forEach(UUIDCache::storeUUIDNamePair));
             });
         } else { // sync load
             for (OfflinePlayer op : Bukkit.getOfflinePlayers()) {

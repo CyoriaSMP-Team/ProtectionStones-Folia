@@ -34,8 +34,16 @@ import org.bukkit.World;
 import org.bukkit.entity.Player;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 public class WGUtils {
+
+    private static final Set<World> loadedWorlds = ConcurrentHashMap.newKeySet();
+    private static final ConcurrentMap<World, RegionManager> loadedRegionManagers = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<UUID, World> worldsById = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<String, World> worldsByName = new ConcurrentHashMap<>();
+    private static volatile boolean worldsInitialized;
 
     // Integer.MAX_VALUE/MIN_VALUE causes strange issues with WG not detecting players in regions,
     // so we use the 16 bit limit, which is more than enough.
@@ -47,7 +55,7 @@ public class WGUtils {
     }
 
     public static RegionManager getRegionManagerWithPlayer(Player p) {
-        return WorldGuard.getInstance().getPlatform().getRegionContainer().get(BukkitAdapter.adapt(p.getWorld()));
+        return getRegionManagerWithWorld(p.getWorld());
     }
 
     /**
@@ -59,7 +67,57 @@ public class WGUtils {
 
     public static RegionManager getRegionManagerWithWorld(World w) {
         if (w == null) return null;
+        if (loadedWorlds.contains(w)) return loadedRegionManagers.get(w);
         return WorldGuard.getInstance().getPlatform().getRegionContainer().get(BukkitAdapter.adapt(w));
+    }
+
+    /** Called during startup while the server is initializing its global state. */
+    public static synchronized void refreshLoadedWorlds() {
+        loadedWorlds.clear();
+        loadedRegionManagers.clear();
+        worldsById.clear();
+        worldsByName.clear();
+        for (World world : Bukkit.getWorlds()) {
+            cacheLoadedWorld(world);
+        }
+        worldsInitialized = true;
+    }
+
+    public static void worldLoaded(World world) {
+        cacheLoadedWorld(world);
+        worldsInitialized = true;
+    }
+
+    public static void worldUnloaded(World world) {
+        loadedWorlds.remove(world);
+        loadedRegionManagers.remove(world);
+        worldsById.remove(world.getUID(), world);
+        worldsByName.remove(world.getName().toLowerCase(Locale.ROOT), world);
+    }
+
+    private static void cacheLoadedWorld(World world) {
+        loadedWorlds.add(world);
+        worldsById.put(world.getUID(), world);
+        worldsByName.put(world.getName().toLowerCase(Locale.ROOT), world);
+        RegionManager manager = WorldGuard.getInstance().getPlatform().getRegionContainer().get(BukkitAdapter.adapt(world));
+        if (manager != null) loadedRegionManagers.put(world, manager);
+    }
+
+    public static Collection<World> getLoadedWorlds() {
+        if (!worldsInitialized) refreshLoadedWorlds();
+        return new ArrayList<>(loadedWorlds);
+    }
+
+    public static World getLoadedWorld(UUID worldId) {
+        if (worldId == null) return null;
+        if (!worldsInitialized) refreshLoadedWorlds();
+        return worldsById.get(worldId);
+    }
+
+    public static World getLoadedWorld(String worldName) {
+        if (worldName == null) return null;
+        if (!worldsInitialized) refreshLoadedWorlds();
+        return worldsByName.get(worldName.toLowerCase(Locale.ROOT));
     }
 
     /**
@@ -70,12 +128,8 @@ public class WGUtils {
      */
 
     public static HashMap<World, RegionManager> getAllRegionManagers() {
-        HashMap<World, RegionManager> m = new HashMap<>();
-        for (World w : Bukkit.getWorlds()) {
-            RegionManager rgm = getRegionManagerWithWorld(w);
-            if (rgm != null) m.put(w, rgm);
-        }
-        return m;
+        if (!worldsInitialized) refreshLoadedWorlds();
+        return new HashMap<>(loadedRegionManagers);
     }
 
     // Turn WG region name into a location (ex. ps138x35y358z)

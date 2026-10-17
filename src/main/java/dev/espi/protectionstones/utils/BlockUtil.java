@@ -19,7 +19,6 @@ import dev.espi.protectionstones.PSProtectBlock;
 import dev.espi.protectionstones.ProtectionStones;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
-import org.bukkit.OfflinePlayer;
 import org.bukkit.block.Block;
 import org.bukkit.block.Skull;
 import org.bukkit.inventory.ItemStack;
@@ -33,12 +32,13 @@ import org.json.simple.parser.ParseException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.Base64;
-import java.util.HashMap;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 public class BlockUtil {
     static final int MAX_USERNAME_LENGTH = 16;
-    public static HashMap<String, String> uuidToBase64Head = new HashMap<>();
+    public static final ConcurrentMap<String, String> uuidToBase64Head = new ConcurrentHashMap<>();
 
     public static ItemStack getProtectBlockItemFromType(String type) {
         if (type.startsWith(Material.PLAYER_HEAD.toString())) {
@@ -118,9 +118,8 @@ public class BlockUtil {
         if (name.length() > MAX_USERNAME_LENGTH) {
             blockWithBase64(b, name);
         } else {
-            OfflinePlayer op = Bukkit.getOfflinePlayer(psType.split(":")[1]);
             Skull s = (Skull) b.getState();
-            s.setOwningPlayer(op);
+            s.setOwnerProfile(Bukkit.createPlayerProfile(name));
             s.update();
         }
     }
@@ -175,7 +174,7 @@ public class BlockUtil {
             return item;
         } else { // normal name head
             SkullMeta sm = (SkullMeta) item.getItemMeta();
-            sm.setOwningPlayer(Bukkit.getOfflinePlayer(name));
+            sm.setOwnerProfile(Bukkit.createPlayerProfile(name));
             item.setItemMeta(sm);
             return item;
         }

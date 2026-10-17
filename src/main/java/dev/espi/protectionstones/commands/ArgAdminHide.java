@@ -20,8 +20,8 @@ import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import dev.espi.protectionstones.PSL;
 import dev.espi.protectionstones.PSRegion;
 import dev.espi.protectionstones.ProtectionStones;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import dev.espi.protectionstones.utils.WGUtils;
-import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
@@ -40,30 +40,31 @@ class ArgAdminHide {
                 PSL.msg(p, PSL.ADMIN_CONSOLE_WORLD.msg());
                 return true;
             }
-            if (Bukkit.getWorld(args[2]) == null) {
+            if (WGUtils.getLoadedWorld(args[2]) == null) {
                 PSL.msg(p, PSL.INVALID_WORLD.msg());
                 return true;
             }
-            w = Bukkit.getWorld(args[2]);
+            w = WGUtils.getLoadedWorld(args[2]);
             mgr = WGUtils.getRegionManagerWithWorld(w);
         }
 
-        Bukkit.getScheduler().runTaskAsynchronously(ProtectionStones.getInstance(), () -> {
+        SchedulerUtil.executeGlobally(() -> {
             // loop through regions that are protection stones and hide or unhide the block
             for (ProtectedRegion r : mgr.getRegions().values()) {
                 if (ProtectionStones.isPSRegion(r)) {
                     PSRegion region = PSRegion.fromWGRegion(w, r);
                     if (args[1].equalsIgnoreCase("hide")) {
-                        Bukkit.getScheduler().runTask(ProtectionStones.getInstance(), region::hide);
+                        SchedulerUtil.executeForLocation(region.getProtectBlockLocation(), region::hide);
                     } else if (args[1].equalsIgnoreCase("unhide")){
-                        Bukkit.getScheduler().runTask(ProtectionStones.getInstance(), region::unhide);
+                        SchedulerUtil.executeForLocation(region.getProtectBlockLocation(), region::unhide);
                     }
                 }
             }
 
             String hMessage = args[1].equalsIgnoreCase("unhide") ? "unhidden" : "hidden";
-            PSL.msg(p, PSL.ADMIN_HIDE_TOGGLED.msg()
-                    .replace("%message%", hMessage));
+            Runnable message = () -> PSL.msg(p, PSL.ADMIN_HIDE_TOGGLED.msg().replace("%message%", hMessage));
+            if (p instanceof Player player) SchedulerUtil.executeForEntity(player, message);
+            else SchedulerUtil.executeGlobally(message);
         });
 
         return true;

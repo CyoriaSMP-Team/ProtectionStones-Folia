@@ -25,7 +25,7 @@ import dev.espi.protectionstones.PSRegion;
 import dev.espi.protectionstones.ProtectionStones;
 import dev.espi.protectionstones.utils.WGMerge;
 import dev.espi.protectionstones.utils.WGUtils;
-import org.bukkit.Bukkit;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import org.bukkit.ChatColor;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
@@ -77,13 +77,6 @@ public class ArgAdminForceMerge {
         }
 
         String world = args[2];
-        World w = Bukkit.getWorld(world);
-
-        if (w == null) {
-            PSL.msg(p, PSL.INVALID_WORLD.msg());
-            return true;
-        }
-
         Set<String> options = new HashSet<>();
         for (int i = 3; i < args.length; i++) {
             if (!flags.contains(args[i])) {
@@ -94,7 +87,19 @@ public class ArgAdminForceMerge {
             }
         }
 
-        RegionManager rm = WGUtils.getRegionManagerWithWorld(Bukkit.getWorld(world));
+        SchedulerUtil.executeGlobally(() -> {
+        World w = WGUtils.getLoadedWorld(world);
+
+        if (w == null) {
+            PSL.msg(p, PSL.INVALID_WORLD.msg());
+            return;
+        }
+
+        RegionManager rm = WGUtils.getRegionManagerWithWorld(w);
+        if (rm == null) {
+            PSL.msg(p, PSL.INVALID_WORLD.msg());
+            return;
+        }
 
         HashMap<String, String> idToGroup = new HashMap<>();
         HashMap<String, List<PSRegion>> groupToMembers = new HashMap<>();
@@ -162,10 +167,10 @@ public class ArgAdminForceMerge {
         // actually do region merging
         for (String key : groupToMembers.keySet()) {
             PSRegion root = null;
-            p.sendMessage(ChatColor.GRAY + "Merging these regions into " + key + ":");
+            SchedulerUtil.sendMessage(p, ChatColor.GRAY + "Merging these regions into " + key + ":");
             for (PSRegion r : groupToMembers.get(key)) {
                 if (r.getId().equals(key)) root = r;
-                p.sendMessage(ChatColor.GRAY + r.getId());
+                SchedulerUtil.sendMessage(p, ChatColor.GRAY + r.getId());
             }
             try {
                 WGMerge.mergeRealRegions(w, rm, root, groupToMembers.get(key));
@@ -174,7 +179,8 @@ public class ArgAdminForceMerge {
             }
         }
 
-        p.sendMessage(ChatColor.GRAY + "Done!");
+        SchedulerUtil.sendMessage(p, ChatColor.GRAY + "Done!");
+        });
 
         return true;
     }
@@ -182,7 +188,7 @@ public class ArgAdminForceMerge {
     static List<String> tabComplete(CommandSender sender, String alias, String[] args) {
         if (args.length == 3) {
             List<String> l = new ArrayList<>();
-            for (World w : Bukkit.getWorlds()) l.add(w.getName());
+            for (World w : WGUtils.getAllRegionManagers().keySet()) l.add(w.getName());
 
             return StringUtil.copyPartialMatches(args[2], l, new ArrayList<>());
         } else {

@@ -27,6 +27,7 @@ import dev.espi.protectionstones.event.PSBreakProtectBlockEvent;
 import dev.espi.protectionstones.event.PSCreateEvent;
 import dev.espi.protectionstones.event.PSRemoveEvent;
 import dev.espi.protectionstones.utils.RecipeUtil;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import dev.espi.protectionstones.utils.UUIDCache;
 import dev.espi.protectionstones.utils.WGUtils;
 import org.bukkit.Bukkit;
@@ -50,13 +51,26 @@ import org.bukkit.event.inventory.*;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
+import org.bukkit.event.world.WorldLoadEvent;
+import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.List;
 
 public class ListenerClass implements Listener {
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onWorldLoad(WorldLoadEvent event) {
+        WGUtils.worldLoaded(event.getWorld());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onWorldUnload(WorldUnloadEvent event) {
+        WGUtils.worldUnloaded(event.getWorld());
+    }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerJoin(PlayerJoinEvent e) {
@@ -64,11 +78,12 @@ public class ListenerClass implements Listener {
 
         // update UUID cache
         UUIDCache.removeUUID(p.getUniqueId());
-        UUIDCache.removeName(p.getName());
-        UUIDCache.storeUUIDNamePair(p.getUniqueId(), p.getName());
+        UUIDCache.setOnline(p);
 
         // allow worldguard to resolve all UUIDs to names
-        Bukkit.getScheduler().runTaskAsynchronously(ProtectionStones.getInstance(), () -> UUIDCache.storeWGProfile(p.getUniqueId(), p.getName()));
+        java.util.UUID playerId = p.getUniqueId();
+        String playerName = p.getName();
+        SchedulerUtil.runAsync(() -> UUIDCache.storeWGProfile(playerId, playerName));
 
         // add recipes to player's recipe book
         p.discoverRecipes(RecipeUtil.getRecipeKeys());
@@ -82,19 +97,21 @@ public class ListenerClass implements Listener {
 
         // tax join message
         if (ProtectionStones.getInstance().getConfigOptions().taxEnabled && ProtectionStones.getInstance().getConfigOptions().taxMessageOnJoin) {
-            Bukkit.getScheduler().runTaskAsynchronously(ProtectionStones.getInstance(), () -> {
-                int amount = 0;
-                for (PSRegion psr : psp.getTaxEligibleRegions()) {
-                    for (PSRegion.TaxPayment tp : psr.getTaxPaymentsDue()) {
-                        amount += tp.getAmount();
-                    }
+            int amount = 0;
+            for (PSRegion psr : psp.getTaxEligibleRegions()) {
+                for (PSRegion.TaxPayment tp : psr.getTaxPaymentsDue()) {
+                    amount += tp.getAmount();
                 }
-
-                if (amount != 0) {
-                    PSL.msg(psp, PSL.TAX_JOIN_MSG_PENDING_PAYMENTS.msg().replace("%money%", "" + amount));
-                }
-            });
+            }
+            if (amount != 0) {
+                PSL.msg(psp, PSL.TAX_JOIN_MSG_PENDING_PAYMENTS.msg().replace("%money%", "" + amount));
+            }
         }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        UUIDCache.setOffline(event.getPlayer().getUniqueId());
     }
 
     // specifically add WG passthrough bypass here, so other plugins can see the result
@@ -179,7 +196,7 @@ public class ListenerClass implements Listener {
                 // method will return not empty if item couldn't be added
                 if (ProtectionStones.getInstance().getConfigOptions().dropItemWhenInventoryFull) {
                     PSL.msg(p, PSL.NO_ROOM_DROPPING_ON_FLOOR.msg());
-                    p.getWorld().dropItem(r.getProtectBlock().getLocation(), blockOptions.createItem());
+                    SchedulerUtil.executeForLocation(r.getProtectBlockLocation(), () -> r.getWorld().dropItem(r.getProtectBlockLocation(), blockOptions.createItem()));
                 } else {
                     PSL.msg(p, PSL.NO_ROOM_IN_INVENTORY.msg());
                     return false;
@@ -202,14 +219,13 @@ public class ListenerClass implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerInteract(PlayerInteractEvent e) {
         // shift-right click block with hand to break
-        if (e.getAction() == Action.RIGHT_CLICK_BLOCK && !e.isBlockInHand()
-                && e.getClickedBlock() != null && ProtectionStones.isProtectBlock(e.getClickedBlock())) {
-
-            PSProtectBlock ppb = ProtectionStones.getBlockOptions(e.getClickedBlock());
-            if (ppb.allowShiftRightBreak && e.getPlayer().isSneaking()) {
-                PSRegion r = PSRegion.fromLocation(e.getClickedBlock().getLocation());
-                if (r != null && playerBreakProtection(e.getPlayer(), r)) { // successful
-                    e.getClickedBlock().setType(Material.AIR);
+        if (e.getAction() == Action.RIGHT_CLICK_BLOCK && !e.isBlockInHand() && e.getClickedBlock() != null) {
+            Block clickedBlock = e.getClickedBlock();
+            PSRegion region = regionAt(clickedBlock.getWorld(), clickedBlock.getX(), clickedBlock.getY(), clickedBlock.getZ());
+            PSProtectBlock ppb = region == null ? null : region.getTypeOptions();
+            if (ppb != null && ppb.allowShiftRightBreak && e.getPlayer().isSneaking()) {
+                if (playerBreakProtection(e.getPlayer(), region)) { // successful
+                    // deleteRegion handles the physical block on the region that owns it.
                 }
             }
         }
@@ -340,8 +356,14 @@ public class ListenerClass implements Listener {
     public void onPlayerBucketFill(PlayerBucketEmptyEvent e) {
         Block clicked = e.getBlockClicked();
         BlockFace bf = e.getBlockFace();
-        Block check = clicked.getWorld().getBlockAt(clicked.getX() + e.getBlockFace().getModX(), clicked.getY() + bf.getModY(), clicked.getZ() + e.getBlockFace().getModZ());
-        if (ProtectionStones.isProtectBlock(check)) {
+        int x = clicked.getX() + bf.getModX();
+        int y = clicked.getY() + bf.getModY();
+        int z = clicked.getZ() + bf.getModZ();
+        Location target = new Location(clicked.getWorld(), x, y, z);
+        boolean isProtectionBlock = Bukkit.isOwnedByCurrentRegion(target)
+                ? ProtectionStones.isProtectBlock(target.getBlock())
+                : regionAt(target.getWorld(), x, y, z) != null;
+        if (isProtectionBlock) {
             e.setCancelled(true);
         }
     }
@@ -426,9 +448,11 @@ public class ListenerClass implements Listener {
     }
 
     private void pistonUtil(List<Block> pushedBlocks, BlockPistonEvent e) {
+        World world = e.getBlock().getWorld();
         for (Block b : pushedBlocks) {
-            PSProtectBlock cpb = ProtectionStones.getBlockOptions(b);
-            if (cpb != null && ProtectionStones.isProtectBlock(b) && cpb.preventPistonPush) {
+            PSRegion region = regionAt(world, b.getX(), b.getY(), b.getZ());
+            PSProtectBlock cpb = region == null ? null : region.getTypeOptions();
+            if (cpb != null && cpb.preventPistonPush) {
                 e.setCancelled(true);
             }
         }
@@ -464,14 +488,30 @@ public class ListenerClass implements Listener {
         for (int i = 0; i < blockList.size(); i++) {
             Block b = blockList.get(i);
 
-            if (ProtectionStones.isProtectBlock(b)) {
+            PSRegion region = regionAt(w, b.getX(), b.getY(), b.getZ());
+            if (region != null && region.getTypeOptions() != null) {
                 // always remove protection block from exploded list
                 blockList.remove(i);
                 i--;
+                blockExplodeUtil(region, isWindCharge);
             }
-
-            blockExplodeUtil(w, b, isWindCharge);
         }
+    }
+
+    private PSRegion regionAt(World world, int x, int y, int z) {
+        return PSRegion.fromLocation(new Location(world, x, y, z));
+    }
+
+    private void blockExplodeUtil(PSRegion region, boolean isWindCharge) {
+        PSProtectBlock blockOptions = region.getTypeOptions();
+        if (blockOptions == null || blockOptions.preventExplode || (isWindCharge && blockOptions.preventWindChargeExplode)) return;
+
+        Location location = region.getProtectBlockLocation();
+        SchedulerUtil.executeForLocation(location, () -> {
+            location.getBlock().setType(Material.AIR, false);
+            if (!blockOptions.noDrop) location.getWorld().dropItem(location, blockOptions.createItem());
+            if (blockOptions.destroyRegionWhenExplode) ProtectionStones.removePSRegion(region.getWorld(), region.getId());
+        });
     }
 
     // returns whether the block is exploded
@@ -551,25 +591,26 @@ public class ListenerClass implements Listener {
                 .replace("%player%", player)
                 .replace("%world%", region.getWorld().getName())
                 .replace("%region%", region.getName() == null ? region.getId() : region.getName() + " (" + region.getId() + ")")
-                .replace("%block_x%", region.getProtectBlock().getX() + "")
-                .replace("%block_y%", region.getProtectBlock().getY() + "")
-                .replace("%block_z%", region.getProtectBlock().getZ() + ""));
+                .replace("%block_x%", region.getProtectBlockLocation().getBlockX() + "")
+                .replace("%block_y%", region.getProtectBlockLocation().getBlockY() + "")
+                .replace("%block_z%", region.getProtectBlockLocation().getBlockZ() + ""));
 
         switch (sp[0]) {
             case "player_command":
-                if (s != null) Bukkit.getServer().dispatchCommand(s, act.toString());
+                if (s != null) SchedulerUtil.executeForSender(s, () -> Bukkit.getServer().dispatchCommand(s, act.toString()));
                 break;
             case "console_command":
-                Bukkit.getServer().dispatchCommand(Bukkit.getServer().getConsoleSender(), act.toString());
+                SchedulerUtil.executeGlobally(() -> Bukkit.getServer().dispatchCommand(Bukkit.getServer().getConsoleSender(), act.toString()));
                 break;
             case "message":
-                if (s != null) s.sendMessage(ChatColor.translateAlternateColorCodes('&', act.toString()));
+                if (s != null) SchedulerUtil.sendMessage(s, ChatColor.translateAlternateColorCodes('&', act.toString()));
                 break;
             case "global_message":
-                for (Player p : Bukkit.getOnlinePlayers()) {
-                    p.sendMessage(ChatColor.translateAlternateColorCodes('&', act.toString()));
-                }
-                ProtectionStones.getPluginLogger().info(ChatColor.translateAlternateColorCodes('&', act.toString()));
+                SchedulerUtil.executeGlobally(() -> {
+                    String message = ChatColor.translateAlternateColorCodes('&', act.toString());
+                    for (Player p : Bukkit.getOnlinePlayers()) SchedulerUtil.executeForEntity(p, () -> p.sendMessage(message));
+                    ProtectionStones.getPluginLogger().info(message);
+                });
                 break;
             case "console_message":
                 ProtectionStones.getPluginLogger().info(ChatColor.translateAlternateColorCodes('&', act.toString()));
@@ -583,12 +624,15 @@ public class ListenerClass implements Listener {
         if (!event.getRegion().getTypeOptions().eventsEnabled) return;
 
         // run on next tick (after the region is created to allow for edits to the region)
-        Bukkit.getServer().getScheduler().runTask(ProtectionStones.getInstance(), () -> {
+        Runnable runActions = () -> {
             // run custom commands (in config)
             for (String action : event.getRegion().getTypeOptions().regionCreateCommands) {
-                execEvent(action, event.getPlayer(), event.getPlayer().getName(), event.getRegion());
+                if (event.getPlayer() == null) execEvent(action, null, null, event.getRegion());
+                else execEvent(action, event.getPlayer(), event.getPlayer().getName(), event.getRegion());
             }
-        });
+        };
+        if (event.getPlayer() != null) SchedulerUtil.executeForEntity(event.getPlayer(), runActions);
+        else SchedulerUtil.executeGlobally(runActions);
     }
 
     @EventHandler

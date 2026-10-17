@@ -20,22 +20,21 @@ import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import dev.espi.protectionstones.PSL;
 import dev.espi.protectionstones.PSRegion;
 import dev.espi.protectionstones.ProtectionStones;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import dev.espi.protectionstones.utils.WGUtils;
 import org.bukkit.*;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
 import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 class ArgAdminCleanup {
-
-    private static File previewFile;
-    private static FileWriter previewFileOutputStream;
 
     static boolean argumentAdminCleanup(CommandSender p, String[] preParseArgs) {
         if (preParseArgs.length < 3 || !Arrays.asList("remove", "preview").contains(preParseArgs[2].toLowerCase())) {
@@ -58,8 +57,8 @@ class ArgAdminCleanup {
             }
         }
 
-        if (args.size() > 1 && Bukkit.getWorld(args.get(1)) != null) {
-            w = Bukkit.getWorld(args.get(1));
+        if (args.size() > 1 && WGUtils.getLoadedWorld(args.get(1)) != null) {
+            w = WGUtils.getLoadedWorld(args.get(1));
         } else {
             if (p instanceof Player) {
                 w = ((Player) p).getWorld();
@@ -77,17 +76,10 @@ class ArgAdminCleanup {
             return true;
         }
 
+        File previewOutputFile = null;
         if (cleanupOperation.equals("preview")) {
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd H-m-s");
-            previewFile = new File(ProtectionStones.getInstance().getDataFolder().getAbsolutePath() + "/" + LocalDateTime.now().format(formatter) + " cleanup preview.txt");
-            try {
-                previewFile.createNewFile();
-                previewFileOutputStream = new FileWriter(previewFile);
-            } catch (IOException e) {
-                e.printStackTrace();
-                p.sendMessage(ChatColor.RED + "Internal error, please check the console logs.");
-                return true;
-            }
+            previewOutputFile = new File(ProtectionStones.getInstance().getDataFolder().getAbsolutePath() + "/" + LocalDateTime.now().format(formatter) + " cleanup preview.txt");
         }
 
         RegionManager rgm = WGUtils.getRegionManagerWithWorld(w);
@@ -100,8 +92,9 @@ class ArgAdminCleanup {
         String finalAlias = alias;
         int finalDays = days;
 
-        Bukkit.getScheduler().runTaskAsynchronously(ProtectionStones.getInstance(), () -> {
-            PSL.msg(p, PSL.ADMIN_CLEANUP_HEADER.msg()
+        final File outputFile = previewOutputFile;
+        SchedulerUtil.executeGlobally(() -> {
+            sendPSL(p, PSL.ADMIN_CLEANUP_HEADER.msg()
                     .replace("%arg%", cleanupOperation)
                     .replace("%days%", "" + finalDays));
 
@@ -151,47 +144,69 @@ class ArgAdminCleanup {
             }
 
             Iterator<PSRegion> deleteRegionsIterator = toDelete.iterator();
-            regionLoop(deleteRegionsIterator, p, cleanupOperation.equalsIgnoreCase("remove"));
+            regionLoop(deleteRegionsIterator, p, cleanupOperation.equalsIgnoreCase("remove"), outputFile, new StringBuilder());
         });
         return false;
     }
 
-    static private void regionLoop(Iterator<PSRegion> deleteRegionsIterator, CommandSender p, boolean isRemoveOperation) {
+    private static void regionLoop(Iterator<PSRegion> deleteRegionsIterator, CommandSender p, boolean isRemoveOperation,
+                                   File outputFile, StringBuilder previewIds) {
         if (deleteRegionsIterator.hasNext()) {
-            Bukkit.getScheduler().runTaskLater(ProtectionStones.getInstance(), () ->
-                    processRegion(deleteRegionsIterator, p, isRemoveOperation), 1);
+            PSRegion next = deleteRegionsIterator.next();
+            Runnable process = () -> {
+                processRegion(next, p, isRemoveOperation, outputFile, previewIds);
+                SchedulerUtil.executeGlobally(() -> regionLoop(deleteRegionsIterator, p, isRemoveOperation, outputFile, previewIds));
+            };
+            if (isRemoveOperation) {
+                SchedulerUtil.executeForLocation(next.getProtectBlockLocation(), process);
+            } else {
+                SchedulerUtil.laterGlobally(process, 1L);
+            }
         } else {
-            PSL.msg(p, PSL.ADMIN_CLEANUP_FOOTER.msg()
+            sendPSL(p, PSL.ADMIN_CLEANUP_FOOTER.msg()
                     .replace("%arg%", isRemoveOperation ? "remove" : "preview"));
 
             if (!isRemoveOperation) {
-                try {
-                    p.sendMessage(ChatColor.YELLOW + "Dumped the list regions that can be deleted in " + previewFile.getName() + " (in the plugin folder).");
-                    previewFileOutputStream.flush();
-                    previewFileOutputStream.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
+                String previewContents = previewIds.toString();
+                SchedulerUtil.runAsync(() -> {
+                    try {
+                        Files.writeString(outputFile.toPath(), previewContents, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                        send(p, ChatColor.YELLOW + "Dumped the list regions that can be deleted in " + outputFile.getName() + " (in the plugin folder).");
+                    } catch (IOException e) {
+                        ProtectionStones.getInstance().getLogger().severe("Failed to write cleanup preview: " + e.getMessage());
+                        send(p, ChatColor.RED + "Internal error, please check the console logs.");
+                    }
+                });
             }
         }
     }
 
-    static private void processRegion(Iterator<PSRegion> deleteRegionsIterator, CommandSender p, boolean isRemoveOperation) {
-        PSRegion r = deleteRegionsIterator.next();
-
+    private static void processRegion(PSRegion r, CommandSender p, boolean isRemoveOperation,
+                                      File outputFile, StringBuilder previewIds) {
         if (isRemoveOperation) {
-            p.sendMessage(ChatColor.YELLOW + "Removed region " + r.getId() + " due to inactive owners.");
+            send(p, ChatColor.YELLOW + "Removed region " + r.getId() + " due to inactive owners.");
             r.deleteRegion(true);
         } else {
-            p.sendMessage(ChatColor.YELLOW + "Found region " + r.getId() + " that can be deleted.");
-
-            try {
-                previewFileOutputStream.write(r.getId() + "\n");
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            send(p, ChatColor.YELLOW + "Found region " + r.getId() + " that can be deleted.");
+            previewIds.append(r.getId()).append('\n');
         }
+    }
 
-        regionLoop(deleteRegionsIterator, p, isRemoveOperation);
+    private static void sendPSL(CommandSender sender, String message) {
+        Runnable sendMessage = () -> PSL.msg(sender, message);
+        if (sender instanceof Player player) SchedulerUtil.executeForEntity(player, sendMessage);
+        else SchedulerUtil.executeGlobally(sendMessage);
+    }
+
+    private static void send(CommandSender sender, String message) {
+        if (sender instanceof Player player) {
+            SchedulerUtil.executeForEntity(player, () -> {
+                if (message != null) sender.sendMessage(message);
+            });
+        } else {
+            SchedulerUtil.executeGlobally(() -> {
+                if (message != null) sender.sendMessage(message);
+            });
+        }
     }
 }

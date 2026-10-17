@@ -19,6 +19,7 @@ import com.sk89q.worldguard.bukkit.WorldGuardPlugin;
 import dev.espi.protectionstones.*;
 import dev.espi.protectionstones.utils.ParticlesUtil;
 import dev.espi.protectionstones.utils.RegionTraverse;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import dev.espi.protectionstones.utils.WGUtils;
 import org.bukkit.*;
 import org.bukkit.command.CommandSender;
@@ -26,10 +27,11 @@ import org.bukkit.entity.Player;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ArgView implements PSCommandArg {
 
-    private static List<UUID> cooldown = new ArrayList<>();
+    private static final Set<UUID> cooldown = ConcurrentHashMap.newKeySet();
 
     @Override
     public List<String> getNames() {
@@ -78,28 +80,30 @@ public class ArgView implements PSCommandArg {
 
         // add player to cooldown
         cooldown.add(p.getUniqueId());
-        Bukkit.getScheduler().runTaskLaterAsynchronously(ProtectionStones.getInstance(), () -> cooldown.remove(p.getUniqueId()), 20 * ProtectionStones.getInstance().getConfigOptions().psViewCooldown);
+        SchedulerUtil.laterForEntity(p, () -> cooldown.remove(p.getUniqueId()), 20L * ProtectionStones.getInstance().getConfigOptions().psViewCooldown);
 
         int playerY = p.getLocation().getBlockY(), minY = r.getWGRegion().getMinimumPoint().getBlockY(), maxY = r.getWGRegion().getMaximumPoint().getBlockY();
 
         // send particles to client
 
-        Bukkit.getScheduler().runTaskAsynchronously(ProtectionStones.getInstance(), () -> {
+        SchedulerUtil.executeForEntity(p, () -> {
 
             AtomicInteger modU = new AtomicInteger(0);
 
             if (r instanceof PSGroupRegion) {
                 PSGroupRegion pr = (PSGroupRegion) r;
                 for (PSMergedRegion psmr : pr.getMergedRegions()) {
-                    handlePurpleParticle(p, new Location(p.getWorld(), 0.5 + psmr.getProtectBlock().getX(), 1.5 + psmr.getProtectBlock().getY(), 0.5 + psmr.getProtectBlock().getZ()));
+                    Location blockLocation = psmr.getProtectBlockLocation();
+                    handlePurpleParticle(p, new Location(p.getWorld(), 0.5 + blockLocation.getX(), 1.5 + blockLocation.getY(), 0.5 + blockLocation.getZ()));
                     for (int y = minY; y <= maxY; y += 10) {
-                        handlePurpleParticle(p, new Location(p.getWorld(), 0.5 + psmr.getProtectBlock().getX(), 0.5 + y, 0.5 + psmr.getProtectBlock().getZ()));
+                        handlePurpleParticle(p, new Location(p.getWorld(), 0.5 + blockLocation.getX(), 0.5 + y, 0.5 + blockLocation.getZ()));
                     }
                 }
             } else {
-                handlePurpleParticle(p, new Location(p.getWorld(), 0.5 + r.getProtectBlock().getX(), 1.5 + r.getProtectBlock().getY(), 0.5 + r.getProtectBlock().getZ()));
+                Location blockLocation = r.getProtectBlockLocation();
+                handlePurpleParticle(p, new Location(p.getWorld(), 0.5 + blockLocation.getX(), 1.5 + blockLocation.getY(), 0.5 + blockLocation.getZ()));
                 for (int y = minY; y <= maxY; y += 10) {
-                    handlePurpleParticle(p, new Location(p.getWorld(), 0.5 + r.getProtectBlock().getX(), 0.5 + y, 0.5 + r.getProtectBlock().getZ()));
+                    handlePurpleParticle(p, new Location(p.getWorld(), 0.5 + blockLocation.getX(), 0.5 + y, 0.5 + blockLocation.getZ()));
                 }
             }
 

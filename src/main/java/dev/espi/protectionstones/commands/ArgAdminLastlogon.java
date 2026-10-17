@@ -22,6 +22,7 @@ import dev.espi.protectionstones.PSRegion;
 import dev.espi.protectionstones.ProtectionStones;
 import dev.espi.protectionstones.utils.UUIDCache;
 import dev.espi.protectionstones.utils.WGUtils;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.World;
@@ -47,19 +48,20 @@ class ArgAdminLastlogon {
             p.sendMessage(PSL.COMMAND_REQUIRES_PLAYER_NAME.msg());
             return true;
         }
-        OfflinePlayer op = Bukkit.getOfflinePlayer(args[2]);
-
         String playerName = args[2];
-        long lastPlayed = (System.currentTimeMillis() - op.getLastPlayed()) / 86400000L;
+        SchedulerUtil.executeGlobally(() -> {
+            OfflinePlayer op = Bukkit.getOfflinePlayer(playerName);
+            long lastPlayed = (System.currentTimeMillis() - op.getLastPlayed()) / 86400000L;
 
-        PSL.msg(p, PSL.ADMIN_LAST_LOGON.msg()
-                .replace("%player%", playerName)
-                .replace("%days%", "" + lastPlayed));
+            sendPSL(p, PSL.ADMIN_LAST_LOGON.msg()
+                    .replace("%player%", playerName)
+                    .replace("%days%", "" + lastPlayed));
 
-        if (op.isBanned()) {
-            PSL.msg(p, PSL.ADMIN_IS_BANNED.msg()
-                    .replace("%player%", playerName));
-        }
+            if (op.isBanned()) {
+                sendPSL(p, PSL.ADMIN_IS_BANNED.msg()
+                        .replace("%player%", playerName));
+            }
+        });
 
         return true;
     }
@@ -79,7 +81,7 @@ class ArgAdminLastlogon {
         PSL.msg(p, PSL.ADMIN_LASTLOGONS_HEADER.msg()
                 .replace("%days%", "" + minDays));
 
-        Bukkit.getScheduler().runTaskAsynchronously(ProtectionStones.getInstance(), () -> {
+        SchedulerUtil.executeGlobally(() -> {
             Set<UUID> ownerUuids = collectRegionOwnerUuids();
             List<LastLogonEntry> matchingEntries = new ArrayList<>();
             long now = System.currentTimeMillis();
@@ -98,8 +100,7 @@ class ArgAdminLastlogon {
 
             matchingEntries.sort(Comparator.comparing(entry -> entry.playerName, String.CASE_INSENSITIVE_ORDER));
 
-            Bukkit.getScheduler().runTask(ProtectionStones.getInstance(), () ->
-                    sendLastLogonEntries(p, matchingEntries, ownerUuids.size(), 0));
+            sendForSender(p, () -> sendLastLogonEntries(p, matchingEntries, ownerUuids.size(), 0));
         });
 
         return true;
@@ -116,8 +117,7 @@ class ArgAdminLastlogon {
 
         if (endIndex < entries.size()) {
             int nextIndex = endIndex;
-            Bukkit.getScheduler().runTaskLater(ProtectionStones.getInstance(),
-                    () -> sendLastLogonEntries(sender, entries, checkedCount, nextIndex), 1L);
+            laterForSender(sender, () -> sendLastLogonEntries(sender, entries, checkedCount, nextIndex), 1L);
             return;
         }
 
@@ -148,5 +148,19 @@ class ArgAdminLastlogon {
             name = uuid.toString().substring(0, 8);
         }
         return name;
+    }
+
+    private static void sendPSL(CommandSender sender, String message) {
+        sendForSender(sender, () -> PSL.msg(sender, message));
+    }
+
+    private static void sendForSender(CommandSender sender, Runnable action) {
+        if (sender instanceof org.bukkit.entity.Player player) SchedulerUtil.executeForEntity(player, action);
+        else SchedulerUtil.executeGlobally(action);
+    }
+
+    private static void laterForSender(CommandSender sender, Runnable action, long delayTicks) {
+        if (sender instanceof org.bukkit.entity.Player player) SchedulerUtil.laterForEntity(player, action, delayTicks);
+        else SchedulerUtil.laterGlobally(action, delayTicks);
     }
 }

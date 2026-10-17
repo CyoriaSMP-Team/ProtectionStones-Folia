@@ -18,6 +18,8 @@ package dev.espi.protectionstones.commands;
 import dev.espi.protectionstones.PSProtectBlock;
 import dev.espi.protectionstones.PSL;
 import dev.espi.protectionstones.ProtectionStones;
+import dev.espi.protectionstones.utils.SchedulerUtil;
+import dev.espi.protectionstones.utils.UUIDCache;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
@@ -57,32 +59,37 @@ public class ArgGive implements PSCommandArg {
         if (args.length < 3)
             return PSL.msg(p, PSL.GIVE_HELP.msg());
 
-        // check if player online
-        if (Bukkit.getPlayer(args[2]) == null)
-            return PSL.msg(p, PSL.PLAYER_NOT_FOUND.msg() + " (" + args[2] + ")");
-
         // check if argument is valid block
         PSProtectBlock cp = ProtectionStones.getProtectBlockFromAlias(args[1]);
         if (cp == null)
             return PSL.msg(p, PSL.INVALID_BLOCK.msg());
 
-        // check if item was able to be added (inventory not full)
-        Player ps = Bukkit.getPlayer(args[2]);
-
-        ItemStack item = cp.createItem();
-        if (args.length >= 4 && NumberUtils.isNumber(args[3]))
-            item.setAmount(Integer.parseInt(args[3]));
-
-        if (!ps.getInventory().addItem(item).isEmpty()) {
-            if (ProtectionStones.getInstance().getConfigOptions().dropItemWhenInventoryFull) {
-                PSL.msg(ps, PSL.NO_ROOM_DROPPING_ON_FLOOR.msg());
-                ps.getWorld().dropItem(ps.getLocation(), cp.createItem());
-            } else {
-                return PSL.msg(p, PSL.GIVE_NO_INVENTORY_ROOM.msg());
+        final int amount = args.length >= 4 && NumberUtils.isNumber(args[3]) ? Integer.parseInt(args[3]) : 1;
+        final String blockAlias = args[1], targetName = args[2];
+        SchedulerUtil.executeGlobally(() -> {
+            Player target = Bukkit.getPlayer(targetName);
+            if (target == null) {
+                PSL.msg(p, PSL.PLAYER_NOT_FOUND.msg() + " (" + targetName + ")");
+                return;
             }
-        }
 
-        return PSL.msg(p, PSL.GIVE_GIVEN.msg().replace("%block%", args[1]).replace("%player%", Bukkit.getPlayer(args[2]).getDisplayName()));
+            SchedulerUtil.executeForEntity(target, () -> {
+                ItemStack item = cp.createItem();
+                item.setAmount(amount);
+                if (!target.getInventory().addItem(item).isEmpty()) {
+                    if (ProtectionStones.getInstance().getConfigOptions().dropItemWhenInventoryFull) {
+                        PSL.msg(target, PSL.NO_ROOM_DROPPING_ON_FLOOR.msg());
+                        target.getWorld().dropItem(target.getLocation(), cp.createItem());
+                    } else {
+                        PSL.msg(p, PSL.GIVE_NO_INVENTORY_ROOM.msg());
+                        return;
+                    }
+                }
+
+            PSL.msg(p, PSL.GIVE_GIVEN.msg().replace("%block%", blockAlias).replace("%player%", target.getDisplayName()));
+            });
+        });
+        return true;
     }
 
     // tab completion
@@ -93,7 +100,7 @@ public class ArgGive implements PSCommandArg {
             for (PSProtectBlock b : ProtectionStones.getInstance().getConfiguredBlocks()) l.add(b.alias);
             return StringUtil.copyPartialMatches(args[1], l, new ArrayList<>());
         } else if (args.length == 3) {
-            for (Player p : Bukkit.getOnlinePlayers()) l.add(p.getName());
+            l.addAll(UUIDCache.getOnlinePlayerNames());
             return StringUtil.copyPartialMatches(args[2], l, new ArrayList<>());
         }
         return null;

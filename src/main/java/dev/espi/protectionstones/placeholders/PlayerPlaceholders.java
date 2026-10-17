@@ -21,7 +21,7 @@ import dev.espi.protectionstones.PSPlayer;
 import dev.espi.protectionstones.PSProtectBlock;
 import dev.espi.protectionstones.PSRegion;
 import dev.espi.protectionstones.ProtectionStones;
-import org.bukkit.Bukkit;
+import dev.espi.protectionstones.utils.WGUtils;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 
@@ -75,41 +75,41 @@ class PlayerPlaceholders {
         } else if (identifier.startsWith("currentplayer_num_of_accessible_regions_")) {
 
             String world = identifier.substring("currentplayer_num_of_accessible_regions_".length());
-            World w = Bukkit.getWorld(world);
+            World w = WGUtils.getLoadedWorld(world);
             return w == null ? "Invalid world." : "" + psp.getPSRegions(w, true).size();
 
         } else if (identifier.startsWith("currentplayer_num_of_accessible_regions")) {
 
-            return "" + Bukkit.getWorlds().stream().mapToInt(w -> psp.getPSRegions(w, true).size()).sum();
+            return "" + WGUtils.getLoadedWorlds().stream().mapToInt(w -> psp.getPSRegions(w, true).size()).sum();
 
         } else if (identifier.startsWith("currentplayer_num_of_owned_regions_")) {
 
             String world = identifier.substring("currentplayer_num_of_owned_regions_".length());
-            World w = Bukkit.getWorld(world);
+            World w = WGUtils.getLoadedWorld(world);
             return w == null ? "Invalid world." : "" + psp.getPSRegions(w, false).size();
 
         } else if (identifier.startsWith("currentplayer_num_of_owned_regions")) {
 
-            return "" + Bukkit.getWorlds().stream().mapToInt(w -> psp.getPSRegions(w, false).size()).sum();
+            return "" + WGUtils.getLoadedWorlds().stream().mapToInt(w -> psp.getPSRegions(w, false).size()).sum();
 
         } else if (identifier.startsWith("currentplayer_owned_regions_ids_")) {
 
-            World w = Bukkit.getWorld(identifier.substring("currentplayer_owned_regions_ids_".length()));
+            World w = WGUtils.getLoadedWorld(identifier.substring("currentplayer_owned_regions_ids_".length()));
             return w == null ? "Invalid world." : getRegionsString(psp.getPSRegions(w, false), false);
 
         } else if (identifier.startsWith("currentplayer_accessible_regions_ids_")) {
 
-            World w = Bukkit.getWorld(identifier.substring("currentplayer_accessible_regions_ids_".length()));
+            World w = WGUtils.getLoadedWorld(identifier.substring("currentplayer_accessible_regions_ids_".length()));
             return w == null ? "Invalid world." : getRegionsString(psp.getPSRegions(w, true), false);
 
         } else if (identifier.startsWith("currentplayer_owned_regions_names_")) {
 
-            World w = Bukkit.getWorld(identifier.substring("currentplayer_owned_regions_names_".length()));
+            World w = WGUtils.getLoadedWorld(identifier.substring("currentplayer_owned_regions_names_".length()));
             return w == null ? "Invalid world." : getRegionsString(psp.getPSRegions(w, false), true);
 
         } else if (identifier.startsWith("currentplayer_accessible_regions_names_")) {
 
-            World w = Bukkit.getWorld(identifier.substring("currentplayer_accessible_regions_names_".length()));
+            World w = WGUtils.getLoadedWorld(identifier.substring("currentplayer_accessible_regions_names_".length()));
             return w == null ? "Invalid world." : getRegionsString(psp.getPSRegions(w, true), true);
 
         } else if (identifier.startsWith("currentplayer_protection_placing_enabled")) {

@@ -262,7 +262,7 @@ public class WGMerge {
         for (PSRegion r : merge) {
             if (!r.getId().equals(newID)) {
                 // run delete event for non-root real regions
-                Bukkit.getScheduler().runTask(ProtectionStones.getInstance(), () -> r.deleteRegion(false));
+                r.deleteRegion(false);
             } else {
                 rm.removeRegion(r.getId());
             }

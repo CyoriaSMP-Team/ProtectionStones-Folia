@@ -28,35 +28,42 @@ import dev.espi.protectionstones.commands.ArgMerge;
 import dev.espi.protectionstones.event.PSCreateEvent;
 import dev.espi.protectionstones.utils.LimitUtil;
 import dev.espi.protectionstones.utils.MiscUtil;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import dev.espi.protectionstones.utils.WGMerge;
 import dev.espi.protectionstones.utils.WGUtils;
 import net.md_5.bungee.api.chat.TextComponent;
 import net.milkbowl.vault.economy.EconomyResponse;
 import org.bukkit.*;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockState;
 import org.bukkit.entity.Player;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.ItemStack;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
+import java.util.UUID;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 public class BlockHandler {
-    private static HashMap<Player, Double> lastProtectStonePlaced = new HashMap<>();
+    private static final ConcurrentMap<UUID, Long> lastProtectStonePlaced = new ConcurrentHashMap<>();
 
     private static String checkCooldown(Player p) {
-        double currentTime = System.currentTimeMillis();
-        if (lastProtectStonePlaced.containsKey(p)) {
+        long currentTime = System.currentTimeMillis();
+        UUID playerId = p.getUniqueId();
+        Long lastPlace = lastProtectStonePlaced.get(playerId);
+        if (lastPlace != null) {
             double cooldown = ProtectionStones.getInstance().getConfigOptions().placingCooldown; // seconds
-            double lastPlace = lastProtectStonePlaced.get(p); // milliseconds
 
             if (lastPlace + cooldown * 1000 > currentTime) { // if cooldown has not been finished
                 return String.format("%.1f", cooldown - ((currentTime - lastPlace) / 1000));
             }
-            lastProtectStonePlaced.remove(p);
         }
-        lastProtectStonePlaced.put(p, currentTime);
+        lastProtectStonePlaced.put(playerId, currentTime);
         return null;
     }
 
@@ -118,14 +125,125 @@ public class BlockHandler {
             return;
         }
 
+        if (ProtectionStones.getInstance().isVaultSupportEnabled() && blockOptions.costToPlace != 0) {
+            boolean containsWorld = blockOptions.worlds.contains(p.getWorld().getName());
+            boolean restricted = (containsWorld && blockOptions.worldListType.equalsIgnoreCase("blacklist"))
+                    || (!containsWorld && blockOptions.worldListType.equalsIgnoreCase("whitelist"));
+            if (!p.hasPermission("protectionstones.admin") && restricted && !blockOptions.preventBlockPlaceInRestrictedWorld) {
+                return; // Preserve the configured behavior: allow placing the block without creating a region or charging.
+            }
+            e.setCancelled(true);
+            deferPaidPlacement(p, b.getLocation().clone(), e.getBlockPlacedState().copy(), e.getHand(), e.getItemInHand().clone(), blockOptions);
+            return;
+        }
+
         // create region, and cancel if it fails
         if (!createPSRegion(p, b.getLocation(), blockOptions)) {
             e.setCancelled(true);
         }
     }
 
+    private static void deferPaidPlacement(Player player, Location location, BlockState placedState, EquipmentSlot hand,
+                                           ItemStack item, PSProtectBlock blockOptions) {
+        UUID playerId = player.getUniqueId();
+        double cost = blockOptions.costToPlace;
+
+        // Cancellation rolls back the vanilla block and inventory change. Reserve the item on its entity
+        // scheduler, then run the economy transaction on the global scheduler.
+        SchedulerUtil.executeForEntity(player, () -> {
+            ItemStack held = hand == EquipmentSlot.HAND ? player.getInventory().getItemInMainHand() : player.getInventory().getItemInOffHand();
+            if (held == null || held.getAmount() < 1 || !held.isSimilar(item)) return;
+            ItemStack reserved = held.clone();
+            reserved.setAmount(held.getAmount() - 1);
+            if (hand == EquipmentSlot.HAND) player.getInventory().setItemInMainHand(reserved.getAmount() == 0 ? null : reserved);
+            else player.getInventory().setItemInOffHand(reserved.getAmount() == 0 ? null : reserved);
+
+            SchedulerUtil.executeGlobally(() -> {
+                if (Bukkit.getPlayer(playerId) == null) {
+                    dropItemAt(location, item);
+                    return;
+                }
+
+                OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(playerId);
+                EconomyResponse response = ProtectionStones.getInstance().getVaultEconomy().withdrawPlayer(offlinePlayer, cost);
+                if (response == null || !response.transactionSuccess()) {
+                    returnReservedItem(playerId, item, location);
+                    SchedulerUtil.sendToPlayer(playerId, response == null ? PSL.NOT_ENOUGH_MONEY.msg() : response.errorMessage);
+                    return;
+                }
+
+                SchedulerUtil.executeForLocation(location, () -> {
+                    if (!placedState.update(true, false)) {
+                        refundPlacement(playerId, cost, item, location, "Unable to place the protection block.");
+                        return;
+                    }
+
+                    SchedulerUtil.executeForEntity(player, () -> {
+                        boolean created = createPSRegion(player, location, blockOptions, true);
+                        if (!created) {
+                            removeBlockAt(location);
+                            refundPlacement(playerId, cost, item, location, null);
+                            return;
+                        }
+                        PSL.msg(player, PSL.PAID_MONEY.msg().replace("%price%", String.format("%.2f", cost)));
+                    }, () -> {
+                        removeBlockAt(location);
+                        refundPlacement(playerId, cost, item, location, null);
+                    });
+                });
+            });
+        });
+    }
+
+    private static void returnReservedItem(UUID playerId, ItemStack item, Location location) {
+        SchedulerUtil.executeGlobally(() -> {
+            Player onlinePlayer = Bukkit.getPlayer(playerId);
+            if (onlinePlayer == null) {
+                dropItemAt(location, item);
+                return;
+            }
+            SchedulerUtil.executeForEntity(onlinePlayer, () -> {
+                Map<Integer, ItemStack> leftovers = onlinePlayer.getInventory().addItem(item.clone());
+                leftovers.values().forEach(leftover -> onlinePlayer.getWorld().dropItem(onlinePlayer.getLocation(), leftover));
+            }, () -> dropItemAt(location, item));
+        });
+    }
+
+    private static void refundPlacement(UUID playerId, double cost, ItemStack item, Location location, String message) {
+        SchedulerUtil.executeGlobally(() -> {
+            EconomyResponse response = ProtectionStones.getInstance().getVaultEconomy().depositPlayer(Bukkit.getOfflinePlayer(playerId), cost);
+            Player onlinePlayer = Bukkit.getPlayer(playerId);
+            if (onlinePlayer == null) {
+                dropItemAt(location, item);
+                if (message != null) ProtectionStones.getPluginLogger().warning(message);
+                return;
+            }
+
+            SchedulerUtil.executeForEntity(onlinePlayer, () -> {
+                Map<Integer, ItemStack> leftovers = onlinePlayer.getInventory().addItem(item.clone());
+                leftovers.values().forEach(leftover -> onlinePlayer.getWorld().dropItem(onlinePlayer.getLocation(), leftover));
+                if (message != null) PSL.msg(onlinePlayer, message);
+                if (response == null || !response.transactionSuccess()) {
+                    PSL.msg(onlinePlayer, response == null ? "Unable to refund the protection block cost." : response.errorMessage);
+                }
+            }, () -> dropItemAt(location, item));
+        });
+    }
+
+    private static void removeBlockAt(Location location) {
+        SchedulerUtil.executeForLocation(location, () -> location.getBlock().setType(Material.AIR, false));
+    }
+
+    private static void dropItemAt(Location location, ItemStack item) {
+        SchedulerUtil.executeForLocation(location, () -> location.getWorld().dropItem(location, item.clone()));
+    }
+
     // create a PS region (no checks for items)
     public static boolean createPSRegion(Player p, Location l, PSProtectBlock blockOptions) {
+        return createPSRegion(p, l, blockOptions, false);
+    }
+
+    private static boolean createPSRegion(Player p, Location l, PSProtectBlock blockOptions, boolean paymentAlreadyTaken) {
         // check permission
         if (!p.hasPermission("protectionstones.create")) {
             PSL.msg(p, PSL.NO_PERMISSION_CREATE.msg());
@@ -160,14 +278,14 @@ public class BlockHandler {
                     PSL.msg(p, PSL.WORLD_DENIED_CREATE.msg());
                     return false;
                 } else {
-                    return true;
+                    return !paymentAlreadyTaken;
                 }
             }
 
         } // end of non-admin checks
 
         // check if player has enough money
-        if (ProtectionStones.getInstance().isVaultSupportEnabled() && blockOptions.costToPlace != 0 && !ProtectionStones.getInstance().getVaultEconomy().has(p, blockOptions.costToPlace)) {
+        if (!paymentAlreadyTaken && ProtectionStones.getInstance().isVaultSupportEnabled() && blockOptions.costToPlace != 0 && !ProtectionStones.getInstance().getVaultEconomy().has(p, blockOptions.costToPlace)) {
             PSL.msg(p, PSL.NOT_ENOUGH_MONEY.msg().replace("%price%", String.format("%.2f", blockOptions.costToPlace)));
             return false;
         }
@@ -180,7 +298,7 @@ public class BlockHandler {
         if (createActualRegion(p, l, blockOptions)) { // region creation successful
 
             // take money
-            if (ProtectionStones.getInstance().isVaultSupportEnabled() && blockOptions.costToPlace != 0) {
+            if (!paymentAlreadyTaken && ProtectionStones.getInstance().isVaultSupportEnabled() && blockOptions.costToPlace != 0) {
                 EconomyResponse er = ProtectionStones.getInstance().getVaultEconomy().withdrawPlayer(p, blockOptions.costToPlace);
                 if (!er.transactionSuccess()) {
                     PSL.msg(p, er.errorMessage);
@@ -275,7 +393,7 @@ public class BlockHandler {
         if (blockOptions.autoHide) {
             PSL.msg(p, PSL.REGION_HIDDEN.msg());
             // run on next tick so placing tile entities don't complain
-            Bukkit.getScheduler().runTask(ProtectionStones.getInstance(), () -> l.getBlock().setType(Material.AIR));
+            SchedulerUtil.executeForLocation(l, () -> l.getBlock().setType(Material.AIR));
         }
 
         if (blockOptions.startWithTaxAutopay) {
@@ -312,16 +430,14 @@ public class BlockHandler {
             // actually do auto merge
             if (!showGUI) {
                 PSRegion finalMergeTo = mergeTo;
-                Bukkit.getScheduler().runTaskAsynchronously(ProtectionStones.getInstance(), () -> {
-                    try {
-                        WGMerge.mergeRealRegions(p.getWorld(), r.getWGRegionManager(), finalMergeTo, Arrays.asList(finalMergeTo, r));
-                        PSL.msg(p, PSL.MERGE_AUTO_MERGED.msg().replace("%region%", finalMergeTo.getId()));
-                    } catch (WGMerge.RegionHoleException e) {
-                        PSL.msg(p, PSL.NO_REGION_HOLES.msg()); // TODO github issue #120, prevent holes even if showGUI is true
-                    } catch (WGMerge.RegionCannotMergeWhileRentedException e) {
-                        // don't need to tell player that you can't merge
-                    }
-                });
+                try {
+                    WGMerge.mergeRealRegions(p.getWorld(), r.getWGRegionManager(), finalMergeTo, Arrays.asList(finalMergeTo, r));
+                    PSL.msg(p, PSL.MERGE_AUTO_MERGED.msg().replace("%region%", finalMergeTo.getId()));
+                } catch (WGMerge.RegionHoleException e) {
+                    PSL.msg(p, PSL.NO_REGION_HOLES.msg()); // TODO github issue #120, prevent holes even if showGUI is true
+                } catch (WGMerge.RegionCannotMergeWhileRentedException e) {
+                    // don't need to tell player that you can't merge
+                }
             }
         }
 

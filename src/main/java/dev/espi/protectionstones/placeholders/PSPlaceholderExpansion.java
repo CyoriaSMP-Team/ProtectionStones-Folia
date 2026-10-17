@@ -19,6 +19,7 @@ package dev.espi.protectionstones.placeholders;
 
 import dev.espi.protectionstones.ProtectionStones;
 import me.clip.placeholderapi.expansion.PlaceholderExpansion;
+import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
 public class PSPlaceholderExpansion extends PlaceholderExpansion {
@@ -51,6 +52,11 @@ public class PSPlaceholderExpansion extends PlaceholderExpansion {
 
     @Override
     public String onPlaceholderRequest(Player p, String identifier) {
+        // PlaceholderAPI may call expansions from asynchronous chat or scoreboard code.
+        // These resolvers inspect the player's world, permissions, or location, so only
+        // run them while the caller owns the player's region.
+        if (p != null && !Bukkit.isOwnedByCurrentRegion(p)) return "";
+
         String[] split = identifier.split("_");
         if (split.length > 0) {
             switch (split[0]) {

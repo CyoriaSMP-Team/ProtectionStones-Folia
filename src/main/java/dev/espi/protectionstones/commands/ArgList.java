@@ -20,6 +20,7 @@ import dev.espi.protectionstones.PSPlayer;
 import dev.espi.protectionstones.PSRegion;
 import dev.espi.protectionstones.ProtectionStones;
 import dev.espi.protectionstones.utils.UUIDCache;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
@@ -64,8 +65,7 @@ public class ArgList implements PSCommandArg {
 
         PSPlayer psp = PSPlayer.fromPlayer((Player) s);
 
-        // run query async to reduce load
-        Bukkit.getScheduler().runTaskAsynchronously(ProtectionStones.getInstance(), () -> {
+        SchedulerUtil.executeForEntity((Player) s, () -> {
             if (args.length == 1) {
                 List<PSRegion> regions = psp.getPSRegionsCrossWorld(psp.getPlayer().getWorld(), true);
                 display(s, regions, psp.getUuid(), true);
@@ -87,7 +87,7 @@ public class ArgList implements PSCommandArg {
         }
         if (args.length == 2) {
             // autocomplete with online player list
-            return StringUtil.copyPartialMatches(args[1], Bukkit.getOnlinePlayers().stream().map(HumanEntity::getName).collect(Collectors.toList()), new ArrayList<>());
+            return StringUtil.copyPartialMatches(args[1], UUIDCache.getOnlinePlayerNames(), new ArrayList<>());
         }
 
         return null;

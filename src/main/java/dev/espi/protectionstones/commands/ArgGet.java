@@ -19,12 +19,14 @@ import dev.espi.protectionstones.PSPlayer;
 import dev.espi.protectionstones.PSProtectBlock;
 import dev.espi.protectionstones.PSL;
 import dev.espi.protectionstones.ProtectionStones;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.ComponentBuilder;
 import net.md_5.bungee.api.chat.HoverEvent;
 import net.md_5.bungee.api.chat.TextComponent;
 import net.milkbowl.vault.economy.EconomyResponse;
 import org.bukkit.Bukkit;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.util.StringUtil;
@@ -88,7 +90,6 @@ public class ArgGet implements PSCommandArg {
     @Override
     public boolean executeArgument(CommandSender s, String[] args, HashMap<String, String> flags) {
         Player p = (Player) s;
-        PSPlayer psp = PSPlayer.fromPlayer(p);
         if (!p.hasPermission("protectionstones.get"))
             return PSL.msg(p, PSL.NO_PERMISSION_GET.msg());
 
@@ -111,41 +112,75 @@ public class ArgGet implements PSCommandArg {
         if (cp.preventPsGet && !p.hasPermission("protectionstones.admin"))
             return PSL.msg(p, PSL.GET_NO_PERMISSION_BLOCK.msg());
 
-        // check if player has enough money
-        if (ProtectionStones.getInstance().isVaultSupportEnabled() && cp.price != 0 && !psp.hasAmount(cp.price))
-            return PSL.msg(p, PSL.NOT_ENOUGH_MONEY.msg().replace("%price%", String.format("%.2f", cp.price)));
-
         // debug message
         if (!ProtectionStones.getInstance().isVaultSupportEnabled() && cp.price != 0) {
             Bukkit.getLogger().info("Vault is not enabled but there is a price set on the protection stone! It will not work!");
         }
 
-        // take money
-        if (ProtectionStones.getInstance().isVaultSupportEnabled() && cp.price != 0) {
-            EconomyResponse er = psp.withdrawBalance(cp.price);
-            if (!er.transactionSuccess()) {
-                return PSL.msg(p, er.errorMessage);
-            }
+        if (!ProtectionStones.getInstance().isVaultSupportEnabled() || cp.price == 0) {
+            return giveItem(p, cp);
         }
 
+        UUID playerId = p.getUniqueId();
+        double price = cp.price;
+        SchedulerUtil.executeGlobally(() -> {
+            OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(playerId);
+            var economy = ProtectionStones.getInstance().getVaultEconomy();
+            if (!economy.has(offlinePlayer, price)) {
+                SchedulerUtil.sendToPlayer(playerId, PSL.NOT_ENOUGH_MONEY.msg().replace("%price%", String.format("%.2f", price)));
+                return;
+            }
+
+            EconomyResponse response = economy.withdrawPlayer(offlinePlayer, price);
+            if (response == null || !response.transactionSuccess()) {
+                SchedulerUtil.sendToPlayer(playerId, response == null ? PSL.NOT_ENOUGH_MONEY.msg() : response.errorMessage);
+                return;
+            }
+            SchedulerUtil.executeForEntity(p, () -> givePaidItem(p, cp, playerId, price),
+                    () -> SchedulerUtil.executeGlobally(() -> economy.depositPlayer(Bukkit.getOfflinePlayer(playerId), price)));
+        });
+        return true;
+    }
+
+    private boolean giveItem(Player p, PSProtectBlock block) {
         // check if item was able to be added (inventory not full)
-        if (!p.getInventory().addItem(cp.createItem()).isEmpty()) {
+        if (!p.getInventory().addItem(block.createItem()).isEmpty()) {
             if (ProtectionStones.getInstance().getConfigOptions().dropItemWhenInventoryFull) { // drop on floor
                 PSL.msg(p, PSL.NO_ROOM_DROPPING_ON_FLOOR.msg());
-                p.getWorld().dropItem(p.getLocation(), cp.createItem());
+                p.getWorld().dropItem(p.getLocation(), block.createItem());
             } else { // cancel event
                 PSL.msg(p, PSL.NO_ROOM_IN_INVENTORY.msg());
-                if (ProtectionStones.getInstance().isVaultSupportEnabled()) {
-                    EconomyResponse er = psp.depositBalance(cp.price);
-                    if (!er.transactionSuccess()) {
-                        return PSL.msg(p, er.errorMessage);
-                    }
-                }
+                return true;
             }
             return true;
         }
 
         return PSL.msg(p, PSL.GET_GOTTEN.msg());
+    }
+
+    private void givePaidItem(Player p, PSProtectBlock block, UUID playerId, double price) {
+        Map<Integer, org.bukkit.inventory.ItemStack> remaining = p.getInventory().addItem(block.createItem());
+        if (remaining.isEmpty()) {
+            PSL.msg(p, PSL.GET_GOTTEN.msg());
+            return;
+        }
+
+        if (ProtectionStones.getInstance().getConfigOptions().dropItemWhenInventoryFull) {
+            PSL.msg(p, PSL.NO_ROOM_DROPPING_ON_FLOOR.msg());
+            remaining.values().forEach(item -> p.getWorld().dropItem(p.getLocation(), item));
+            return;
+        }
+
+        SchedulerUtil.executeGlobally(() -> {
+            var economy = ProtectionStones.getInstance().getVaultEconomy();
+            EconomyResponse refund = economy.depositPlayer(Bukkit.getOfflinePlayer(playerId), price);
+            SchedulerUtil.executeForEntity(p, () -> {
+                PSL.msg(p, PSL.NO_ROOM_IN_INVENTORY.msg());
+                if (refund == null || !refund.transactionSuccess()) {
+                    PSL.msg(p, refund == null ? "Unable to refund the protection block price." : refund.errorMessage);
+                }
+            });
+        });
     }
 
     // tab completion

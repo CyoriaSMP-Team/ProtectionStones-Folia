@@ -22,7 +22,7 @@ import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import dev.espi.protectionstones.FlagHandler;
 import dev.espi.protectionstones.PSL;
 import dev.espi.protectionstones.utils.WGUtils;
-import org.bukkit.Bukkit;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import org.bukkit.ChatColor;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
@@ -38,14 +38,17 @@ class ArgAdminChangeType {
             return PSL.msg(p, ArgAdmin.getChangeRegionTypeHelp());
         }
 
-        World w = Bukkit.getWorld(args[2]);
+        SchedulerUtil.executeGlobally(() -> {
+        World w = WGUtils.getLoadedWorld(args[2]);
         if (w == null) {
-            return PSL.msg(p, PSL.INVALID_WORLD.msg());
+            PSL.msg(p, PSL.INVALID_WORLD.msg());
+            return;
         }
 
         RegionManager rgm = WGUtils.getRegionManagerWithWorld(w);
         if (rgm == null) {
-            return PSL.msg(p, ChatColor.GRAY + "The world does not have WorldGuard configured!");
+            PSL.msg(p, ChatColor.GRAY + "The world does not have WorldGuard configured!");
+            return;
         }
 
         String fromType = args[3], toType = args[4];
@@ -55,7 +58,7 @@ class ArgAdminChangeType {
             // update block material
             if (r.getFlag(FlagHandler.PS_BLOCK_MATERIAL) != null && r.getFlag(FlagHandler.PS_BLOCK_MATERIAL).equals(fromType)) {
                 r.setFlag(FlagHandler.PS_BLOCK_MATERIAL, toType);
-                p.sendMessage(ChatColor.GRAY + "Updated region " + r.getId());
+                SchedulerUtil.sendMessage(p, ChatColor.GRAY + "Updated region " + r.getId());
             }
             // update merged regions
             if (r.getFlag(FlagHandler.PS_MERGED_REGIONS_TYPES) != null) {
@@ -65,7 +68,7 @@ class ArgAdminChangeType {
 
                     if (spl.length == 2) {
                         if (spl[1].equals(fromType)) { // if it is of the type to change
-                            p.sendMessage(ChatColor.GRAY + "Updated merged region " + spl[0]);
+                            SchedulerUtil.sendMessage(p, ChatColor.GRAY + "Updated merged region " + spl[0]);
                             s.add(spl[0] + " " + toType);
                         } else {
                             s.add(entry);
@@ -78,8 +81,9 @@ class ArgAdminChangeType {
             }
         }
 
-        p.sendMessage(ChatColor.GREEN + "Finished!");
-        p.sendMessage(ChatColor.GRAY + "You should restart the server, and make sure the new block type is configured in the config.");
+        SchedulerUtil.sendMessage(p, ChatColor.GREEN + "Finished!");
+        SchedulerUtil.sendMessage(p, ChatColor.GRAY + "You should restart the server, and make sure the new block type is configured in the config.");
+        });
         return true;
     }
 

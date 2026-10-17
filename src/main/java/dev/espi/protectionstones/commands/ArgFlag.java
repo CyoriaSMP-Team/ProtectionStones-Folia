@@ -361,7 +361,18 @@ public class ArgFlag implements PSCommandArg {
             if (value.equalsIgnoreCase("default")) { // get default from config, or from WG
 
                 HashMap<Flag<?>, Object> flags = new HashMap<>(r.getTypeOptions().regionFlags);
-                FlagHandler.initDefaultFlagPlaceholders(flags, (Player) p);
+                if (p instanceof Player player) {
+                    FlagHandler.initDefaultFlagPlaceholders(flags, player);
+                } else if (!r.getOwners().isEmpty()) {
+                    String ownerName = dev.espi.protectionstones.utils.UUIDCache.getNameFromUUID(r.getOwners().get(0));
+                    if (ownerName != null) {
+                        for (Map.Entry<Flag<?>, Object> flagEntry : flags.entrySet()) {
+                            if (FlagHandler.getPlayerPlaceholderFlags().contains(flagEntry.getKey().getName()) && flagEntry.getValue() instanceof String valueString) {
+                                flagEntry.setValue(valueString.replace("%player%", ownerName));
+                            }
+                        }
+                    }
+                }
                 if (flags.get(flag) != null) {
                     region.setFlag(flag, flags.get(flag));
                 } else {

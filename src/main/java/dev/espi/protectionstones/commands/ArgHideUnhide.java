@@ -18,12 +18,14 @@ package dev.espi.protectionstones.commands;
 import com.sk89q.worldguard.bukkit.WorldGuardPlugin;
 import dev.espi.protectionstones.*;
 import dev.espi.protectionstones.utils.WGUtils;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.UUID;
 
 public class ArgHideUnhide implements PSCommandArg {
 
@@ -65,17 +67,20 @@ public class ArgHideUnhide implements PSCommandArg {
         if (WGUtils.hasNoAccess(r.getWGRegion(), p, WorldGuardPlugin.inst().wrapPlayer(p), false))
             return PSL.msg(p, PSL.NO_ACCESS.msg());
 
-        if (r.isHidden()) {
-            if (arg[0].equals("hide")) {
-                return PSL.msg(p, PSL.ALREADY_HIDDEN.msg());
+        UUID playerId = p.getUniqueId();
+        String operation = arg[0];
+        SchedulerUtil.executeForLocation(r.getProtectBlockLocation(), () -> {
+            boolean hidden = r.isHidden();
+            if (hidden && operation.equals("hide")) {
+                SchedulerUtil.sendToPlayer(playerId, PSL.ALREADY_HIDDEN.msg());
+            } else if (!hidden && operation.equals("unhide")) {
+                SchedulerUtil.sendToPlayer(playerId, PSL.ALREADY_NOT_HIDDEN.msg());
+            } else if (hidden) {
+                r.unhide();
+            } else {
+                r.hide();
             }
-            r.unhide();
-        } else {
-            if (arg[0].equals("unhide")) {
-                return PSL.msg(p, PSL.ALREADY_NOT_HIDDEN.msg());
-            }
-            r.hide();
-        }
+        });
         return true;
     }
 

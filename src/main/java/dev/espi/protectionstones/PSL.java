@@ -15,7 +15,9 @@
 
 package dev.espi.protectionstones;
 
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import org.apache.commons.lang3.StringUtils;
+import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -453,13 +455,21 @@ public enum PSL {
 
     public static boolean msg(CommandSender p, String str) {
         if (str != null && !str.isEmpty() && p != null) {
-            p.sendMessage(str);
+            if (p instanceof org.bukkit.entity.Entity entity) {
+                if (Bukkit.isOwnedByCurrentRegion(entity)) p.sendMessage(str);
+                else SchedulerUtil.executeForEntity(entity, () -> p.sendMessage(str));
+            } else if (Bukkit.isGlobalTickThread()) {
+                p.sendMessage(str);
+            } else {
+                SchedulerUtil.executeGlobally(() -> p.sendMessage(str));
+            }
         }
         return true;
     }
 
     public static boolean msg(PSPlayer p, String str) {
-        return msg(p.getPlayer(), str);
+        if (str != null && !str.isEmpty() && p != null) SchedulerUtil.sendToPlayer(p.getUuid(), str);
+        return true;
     }
 
     public static void loadConfig() {

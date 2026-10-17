@@ -23,9 +23,11 @@ import com.sk89q.worldguard.protection.regions.ProtectedCuboidRegion;
 import com.sk89q.worldguard.protection.regions.ProtectedPolygonalRegion;
 import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import dev.espi.protectionstones.*;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import dev.espi.protectionstones.utils.WGUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.configuration.file.YamlConfiguration;
 
@@ -35,6 +37,7 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class LegacyUpgrade {
 
@@ -95,8 +98,9 @@ public class LegacyUpgrade {
             }
         }
 
-        for (World world : Bukkit.getWorlds()) {
-            RegionManager rm = WGUtils.getRegionManagerWithWorld(world);
+        for (Map.Entry<World, RegionManager> entry : WGUtils.getAllRegionManagers().entrySet()) {
+            World world = entry.getKey();
+            RegionManager rm = entry.getValue();
             for (ProtectedRegion r : rm.getRegions().values()) {
                 if (ProtectionStones.isPSRegion(r)) {
                     PSRegion psr = PSRegion.fromWGRegion(world, r);
@@ -143,57 +147,92 @@ public class LegacyUpgrade {
     // check that all of the PS custom flags are in ps regions and upgrade if not
     // originally used for the v1 -> v2 transition
     public static void upgradeRegions() {
+        upgradeRegions(() -> {});
+    }
 
+    public static void upgradeRegions(Runnable completion) {
+        SchedulerUtil.executeGlobally(() -> upgradeRegionsOnGlobal(completion));
+    }
+
+    private static void upgradeRegionsOnGlobal(Runnable completion) {
         YamlConfiguration hideFile = null;
         if (new File(ProtectionStones.getInstance().getDataFolder() + "/hiddenpstones.yml").exists()) {
             hideFile = YamlConfiguration.loadConfiguration(new File(ProtectionStones.getInstance().getDataFolder() + "/hiddenpstones.yml"));
         }
-        for (World world : Bukkit.getWorlds()) {
-            RegionManager rm = WGUtils.getRegionManagerWithWorld(world);
-            for (String regionName : rm.getRegions().keySet()) {
-                if (regionName.startsWith("ps") && !ProtectionStones.isPSRegion(rm.getRegion(regionName))) {
+        Map<World, RegionManager> managers = WGUtils.getAllRegionManagers();
+        List<UpgradeTarget> targets = new ArrayList<>();
+        for (Map.Entry<World, RegionManager> entry : managers.entrySet()) {
+            World world = entry.getKey();
+            RegionManager manager = entry.getValue();
+            for (ProtectedRegion region : manager.getRegions().values()) {
+                if (region.getId().startsWith("ps") && !ProtectionStones.isPSRegion(region)) {
                     try {
-                        PSLocation psl = WGUtils.parsePSRegionToLocation(regionName);
-                        ProtectedRegion r = rm.getRegion(regionName);
-
-                        // get material of ps
-                        String entry = psl.x + "x" + psl.y + "y" + psl.z + "z", material;
-                        if (hideFile != null && hideFile.contains(entry)) {
-                            material = hideFile.getString(entry);
-                        } else {
-                            material = world.getBlockAt(psl.x, psl.y, psl.z).getType().toString();
-                        }
-
-                        if (r.getFlag(FlagHandler.PS_BLOCK_MATERIAL) == null) {
-                            r.setFlag(FlagHandler.PS_BLOCK_MATERIAL, material);
-                        }
-
-                        if (r.getFlag(FlagHandler.PS_HOME) == null) {
-                            if (ProtectionStones.isProtectBlockType(material)) {
-                                PSProtectBlock cpb = ProtectionStones.getBlockOptions(material);
-                                r.setFlag(FlagHandler.PS_HOME, (psl.x + cpb.homeXOffset) + " " + (psl.y + cpb.homeYOffset) + " " + (psl.z + cpb.homeZOffset));
-                            } else {
-                                r.setFlag(FlagHandler.PS_HOME, psl.x + " " + psl.y + " " + psl.z);
-                            }
-                        }
-                    } catch (Exception e) {
-                        e.printStackTrace();
+                        targets.add(new UpgradeTarget(world, manager, region, WGUtils.parsePSRegionToLocation(region.getId())));
+                    } catch (Exception exception) {
+                        ProtectionStones.getPluginLogger().warning("Skipping invalid legacy region " + region.getId() + ": " + exception.getMessage());
                     }
                 }
             }
-            try {
-                rm.save();
-            } catch (Exception e) {
-                Bukkit.getLogger().severe("[ProtectionStones] WorldGuard Error [" + e + "] during Region File Save");
-            }
+        }
+
+        AtomicInteger remaining = new AtomicInteger(targets.size());
+        Runnable finish = () -> {
+            SchedulerUtil.runAsync(() -> {
+                for (RegionManager manager : managers.values()) {
+                    try {
+                        manager.save();
+                    } catch (Exception exception) {
+                        Bukkit.getLogger().severe("[ProtectionStones] WorldGuard Error [" + exception + "] during Region File Save");
+                    }
+                }
+                SchedulerUtil.executeGlobally(() -> {
+                    ProtectionStones.getInstance().getLogger().info("Finished!");
+                    completion.run();
+                });
+            });
+        };
+
+        if (targets.isEmpty()) {
+            finish.run();
+            return;
+        }
+
+        YamlConfiguration finalHideFile = hideFile;
+        for (UpgradeTarget target : targets) {
+            PSLocation position = target.position;
+            String hiddenEntry = position.x + "x" + position.y + "y" + position.z + "z";
+            String hiddenMaterial = finalHideFile != null && finalHideFile.contains(hiddenEntry) ? finalHideFile.getString(hiddenEntry) : null;
+            Location blockLocation = new Location(target.world, position.x, position.y, position.z);
+            SchedulerUtil.executeForLocation(blockLocation, () -> {
+                try {
+                    String material = hiddenMaterial == null ? target.world.getBlockAt(position.x, position.y, position.z).getType().toString() : hiddenMaterial;
+                    if (target.region.getFlag(FlagHandler.PS_BLOCK_MATERIAL) == null) {
+                        target.region.setFlag(FlagHandler.PS_BLOCK_MATERIAL, material);
+                    }
+
+                    if (target.region.getFlag(FlagHandler.PS_HOME) == null) {
+                        if (ProtectionStones.isProtectBlockType(material)) {
+                            PSProtectBlock block = ProtectionStones.getBlockOptions(material);
+                            target.region.setFlag(FlagHandler.PS_HOME, (position.x + block.homeXOffset) + " " + (position.y + block.homeYOffset) + " " + (position.z + block.homeZOffset));
+                        } else {
+                            target.region.setFlag(FlagHandler.PS_HOME, position.x + " " + position.y + " " + position.z);
+                        }
+                    }
+                } catch (Exception exception) {
+                    ProtectionStones.getPluginLogger().warning("Unable to upgrade region " + target.region.getId() + ": " + exception.getMessage());
+                } finally {
+                    if (remaining.decrementAndGet() == 0) finish.run();
+                }
+            });
         }
     }
 
     // convert regions to use UUIDs instead of player names
     public static void convertToUUID() {
         Bukkit.getLogger().info("Updating PS regions to UUIDs...");
-        for (World world : Bukkit.getWorlds()) {
-            RegionManager rm = WGUtils.getRegionManagerWithWorld(world);
+        for (Map.Entry<World, RegionManager> entry : WGUtils.getAllRegionManagers().entrySet()) {
+            World world = entry.getKey();
+            RegionManager rm = entry.getValue();
 
             // iterate over regions in world
             for (String regionName : rm.getRegions().keySet()) {
@@ -300,5 +339,19 @@ public class LegacyUpgrade {
         Bukkit.getLogger().info(ChatColor.AQUA + "Updating PS Regions to new format...");
         LegacyUpgrade.upgradeRegions();
         Bukkit.getLogger().info(ChatColor.GREEN + "Done!");
+    }
+
+    private static final class UpgradeTarget {
+        private final World world;
+        private final RegionManager manager;
+        private final ProtectedRegion region;
+        private final PSLocation position;
+
+        private UpgradeTarget(World world, RegionManager manager, ProtectedRegion region, PSLocation position) {
+            this.world = world;
+            this.manager = manager;
+            this.region = region;
+            this.position = position;
+        }
     }
 }

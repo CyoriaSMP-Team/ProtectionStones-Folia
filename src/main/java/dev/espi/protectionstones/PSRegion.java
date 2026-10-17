@@ -20,6 +20,7 @@ import com.sk89q.worldguard.protection.managers.RegionManager;
 import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import dev.espi.protectionstones.utils.BlockUtil;
 import dev.espi.protectionstones.utils.WGUtils;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import net.milkbowl.vault.economy.EconomyResponse;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -30,6 +31,8 @@ import org.bukkit.entity.Player;
 
 import javax.annotation.Nullable;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -38,6 +41,9 @@ import static com.google.common.base.Preconditions.checkNotNull;
  */
 
 public abstract class PSRegion {
+    private static final ConcurrentMap<String, Boolean> hiddenBlockStateCache = new ConcurrentHashMap<>();
+    private static final Set<String> hiddenBlockRefreshPending = ConcurrentHashMap.newKeySet();
+
     RegionManager rgmanager;
     World world;
 
@@ -149,7 +155,9 @@ public abstract class PSRegion {
 
         List<PSRegion> l = new ArrayList<>();
 
-        List<String> rIds = ProtectionStones.regionNameToID.get(w.getUID()).get(name);
+        var worldNames = ProtectionStones.regionNameToID.get(w.getUID());
+        if (worldNames == null) return l;
+        List<String> rIds = worldNames.get(name);
         if (rIds == null) return l;
 
         for (int i = 0; i < rIds.size(); i++) {
@@ -173,9 +181,10 @@ public abstract class PSRegion {
 
     public static HashMap<World, List<PSRegion>> fromName(String name) {
         HashMap<World, List<PSRegion>> regions = new HashMap<>();
-        for (UUID worldUid : ProtectionStones.regionNameToID.keySet()) {
-            World w = Bukkit.getWorld(worldUid);
-            regions.put(w, fromName(w, name));
+        for (World world : WGUtils.getAllRegionManagers().keySet()) {
+            if (ProtectionStones.regionNameToID.containsKey(world.getUID())) {
+                regions.put(world, fromName(world, name));
+            }
         }
         return regions;
     }
@@ -187,6 +196,30 @@ public abstract class PSRegion {
      */
     public World getWorld() {
         return world;
+    }
+
+    /**
+     * Get the location encoded in this region's protection block ID without looking up block state.
+     * Use this to choose the owning Folia region before calling methods that read or change the block.
+     */
+    public Location getProtectBlockLocation() {
+        PSLocation blockLocation = WGUtils.parsePSRegionToLocation(getId());
+        return new Location(world, blockLocation.x, blockLocation.y, blockLocation.z);
+    }
+
+    /**
+     * Remove the physical protection block if it is currently visible, on the region that owns it.
+     */
+    protected void removeVisibleProtectBlock() {
+        Location location = getProtectBlockLocation();
+        Runnable remove = () -> {
+            if (!isHidden()) getProtectBlock().setType(Material.AIR);
+        };
+        if (Bukkit.isOwnedByCurrentRegion(location)) {
+            remove.run();
+        } else {
+            SchedulerUtil.executeForLocation(location, remove);
+        }
     }
 
     @Deprecated
@@ -576,7 +609,28 @@ public abstract class PSRegion {
      * @return whether or not the protection block is hidden (/ps hide)
      */
     public boolean isHidden() {
-        return !this.getType().equals(BlockUtil.getProtectBlockType(this.getProtectBlock()));
+        Location location = getProtectBlockLocation();
+        String cacheKey = getHiddenCacheKey();
+        if (!Bukkit.isOwnedByCurrentRegion(location)) {
+            if (hiddenBlockRefreshPending.add(cacheKey)) {
+                SchedulerUtil.executeForLocation(location, () -> {
+                    try {
+                        isHidden();
+                    } finally {
+                        hiddenBlockRefreshPending.remove(cacheKey);
+                    }
+                });
+            }
+            return hiddenBlockStateCache.getOrDefault(cacheKey, false);
+        }
+
+        boolean hidden = !this.getType().equals(BlockUtil.getProtectBlockType(this.getProtectBlock()));
+        hiddenBlockStateCache.put(cacheKey, hidden);
+        return hidden;
+    }
+
+    private String getHiddenCacheKey() {
+        return world.getUID() + ":" + getId();
     }
 
     /**
@@ -584,8 +638,14 @@ public abstract class PSRegion {
      * @return whether or not the block was hidden
      */
     public boolean hide() {
+        Location location = getProtectBlockLocation();
+        if (!Bukkit.isOwnedByCurrentRegion(location)) {
+            SchedulerUtil.executeForLocation(location, this::hide);
+            return true;
+        }
         if (!isHidden()) {
             getProtectBlock().setType(Material.AIR);
+            hiddenBlockStateCache.put(getHiddenCacheKey(), true);
             return true;
         } else {
             return false;
@@ -597,6 +657,11 @@ public abstract class PSRegion {
      * @return whether or not the block was unhidden
      */
     public boolean unhide() {
+        Location location = getProtectBlockLocation();
+        if (!Bukkit.isOwnedByCurrentRegion(location)) {
+            SchedulerUtil.executeForLocation(location, this::unhide);
+            return true;
+        }
         if (isHidden()) {
             if (getType().startsWith("PLAYER_HEAD")) {
                 getProtectBlock().setType(Material.PLAYER_HEAD);
@@ -606,6 +671,7 @@ public abstract class PSRegion {
             } else {
                 getProtectBlock().setType(Material.getMaterial(getType()));
             }
+            hiddenBlockStateCache.put(getHiddenCacheKey(), false);
             return true;
         } else {
             return false;
@@ -643,6 +709,11 @@ public abstract class PSRegion {
      * @param type the type of protection region to switch to
      */
     public void setType(PSProtectBlock type) {
+        Location location = getProtectBlockLocation();
+        if (!Bukkit.isOwnedByCurrentRegion(location)) {
+            SchedulerUtil.executeForLocation(location, () -> setType(type));
+            return;
+        }
         if (!isHidden()) {
             Material set = Material.matchMaterial(type.type) == null ? Material.PLAYER_HEAD : Material.matchMaterial(type.type);
             getProtectBlock().setType(set);

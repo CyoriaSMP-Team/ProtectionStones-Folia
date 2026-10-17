@@ -124,10 +124,9 @@ public class ArgAdmin implements PSCommandArg {
             case "settaxautopayers":
                 return ArgAdminSetTaxAutopayers.argumentAdminSetTaxAutopayers(s, args);
             case "fixregions":
-                s.sendMessage(ChatColor.YELLOW + "Fixing...");
-                LegacyUpgrade.upgradeRegions();
-                s.sendMessage(ChatColor.YELLOW + "Done!");
-                break;
+                PSL.msg(s, ChatColor.YELLOW + "Fixing...");
+                LegacyUpgrade.upgradeRegions(() -> PSL.msg(s, ChatColor.YELLOW + "Done!"));
+                return true;
             case "debug":
                 if (ProtectionStones.getInstance().isDebug()) {
                     s.sendMessage(ChatColor.YELLOW + "Debug mode is now off.");

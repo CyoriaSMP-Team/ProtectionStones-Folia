@@ -19,6 +19,7 @@ import com.sk89q.worldguard.bukkit.WorldGuardPlugin;
 import com.sk89q.worldguard.protection.managers.RegionManager;
 import dev.espi.protectionstones.ProtectionStones;
 import dev.espi.protectionstones.utils.WGUtils;
+import dev.espi.protectionstones.utils.SchedulerUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.OfflinePlayer;
@@ -31,6 +32,7 @@ class ArgAdminStats {
 
     // /ps admin stats
     static boolean argumentAdminStats(CommandSender p, String[] args) {
+        SchedulerUtil.executeGlobally(() -> {
         WorldGuardPlugin wg = WorldGuardPlugin.inst();
 
         int size = 0;
@@ -46,24 +48,23 @@ class ArgAdminStats {
             for (RegionManager rgm : m.values()) {
                 count += rgm.getRegionCountOfPlayer(wg.wrapOfflinePlayer(op));
             }
-            p.sendMessage(ChatColor.YELLOW + playerName + ":");
-            p.sendMessage(ChatColor.YELLOW + "================");
+            SchedulerUtil.sendMessage(p, ChatColor.YELLOW + playerName + ":");
+            SchedulerUtil.sendMessage(p, ChatColor.YELLOW + "================");
             long firstPlayed = (System.currentTimeMillis() - op.getFirstPlayed()) / 86400000L;
-            p.sendMessage(ChatColor.YELLOW + "First played " + firstPlayed + " days ago.");
+            SchedulerUtil.sendMessage(p, ChatColor.YELLOW + "First played " + firstPlayed + " days ago.");
             long lastPlayed = (System.currentTimeMillis() - op.getLastPlayed()) / 86400000L;
-            p.sendMessage(ChatColor.YELLOW + "Last played " + lastPlayed + " days ago.");
+            SchedulerUtil.sendMessage(p, ChatColor.YELLOW + "Last played " + lastPlayed + " days ago.");
 
             String banMessage = (op.isBanned()) ? "Banned" : "Not Banned";
-            p.sendMessage(ChatColor.YELLOW + banMessage);
-            p.sendMessage(ChatColor.YELLOW + "Regions: " + count);
-            p.sendMessage(ChatColor.YELLOW + "================");
-            return true;
+            SchedulerUtil.sendMessage(p, ChatColor.YELLOW + banMessage);
+            SchedulerUtil.sendMessage(p, ChatColor.YELLOW + "Regions: " + count);
+            SchedulerUtil.sendMessage(p, ChatColor.YELLOW + "================");
+        } else {
+            SchedulerUtil.sendMessage(p, ChatColor.YELLOW + "================");
+            SchedulerUtil.sendMessage(p, ChatColor.YELLOW + "Regions: " + size);
+            SchedulerUtil.sendMessage(p, ChatColor.YELLOW + "================");
         }
-
-        p.sendMessage(ChatColor.YELLOW + "================");
-        p.sendMessage(ChatColor.YELLOW + "Regions: " + size);
-        p.sendMessage(ChatColor.YELLOW + "================");
-
+        });
         return true;
     }
 }

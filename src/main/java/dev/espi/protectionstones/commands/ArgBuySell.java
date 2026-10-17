@@ -21,9 +21,15 @@ import dev.espi.protectionstones.PSRegion;
 import dev.espi.protectionstones.ProtectionStones;
 import dev.espi.protectionstones.utils.LimitUtil;
 import dev.espi.protectionstones.utils.UUIDCache;
+import dev.espi.protectionstones.utils.SchedulerUtil;
+import dev.espi.protectionstones.utils.WGUtils;
+import com.sk89q.worldguard.protection.managers.RegionManager;
+import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.OfflinePlayer;
+import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
@@ -83,22 +89,41 @@ public class ArgBuySell implements PSCommandArg {
             if (!LimitUtil.check(p, r.getTypeOptions()))
                 return PSL.msg(p, PSL.REACHED_REGION_LIMIT.msg().replace("%limit%", "" + PSPlayer.fromPlayer(p).getGlobalRegionLimits()));
 
-            if (!PSPlayer.fromPlayer(p).hasAmount(r.getPrice()))
-                return PSL.msg(p, PSL.NOT_ENOUGH_MONEY.msg().replace("%price%", new DecimalFormat("#.##").format(r.getPrice())));
+            UUID buyerId = p.getUniqueId();
+            UUID worldId = r.getWorld().getUID();
+            String regionId = r.getId();
+            String buyerName = p.getName();
+            SchedulerUtil.executeGlobally(() -> {
+                World world = WGUtils.getLoadedWorld(worldId);
+                RegionManager manager = WGUtils.getRegionManagerWithWorld(world);
+                ProtectedRegion worldGuardRegion = manager == null ? null : manager.getRegion(regionId);
+                PSRegion current = worldGuardRegion == null ? null : PSRegion.fromWGRegion(world, worldGuardRegion);
+                if (current == null || !current.forSale()) {
+                    SchedulerUtil.sendToPlayer(buyerId, PSL.BUY_NOT_FOR_SALE.msg());
+                    return;
+                }
 
-            PSL.msg(p, PSL.BUY_SOLD_BUYER.msg()
-                    .replace("%region%", r.getName() == null ? r.getId() : r.getName())
-                    .replace("%price%", String.format("%.2f", r.getPrice()))
-                    .replace("%player%", UUIDCache.getNameFromUUID(r.getLandlord())));
+                OfflinePlayer buyer = Bukkit.getOfflinePlayer(buyerId);
+                if (!ProtectionStones.getInstance().getVaultEconomy().has(buyer, current.getPrice())) {
+                    SchedulerUtil.sendToPlayer(buyerId, PSL.NOT_ENOUGH_MONEY.msg().replace("%price%", new DecimalFormat("#.##").format(current.getPrice())));
+                    return;
+                }
 
-            if (Bukkit.getPlayer(r.getLandlord()) != null) {
-                PSL.msg(Bukkit.getPlayer(r.getLandlord()), PSL.BUY_SOLD_SELLER.msg()
-                        .replace("%region%", r.getName() == null ? r.getId() : r.getName())
-                        .replace("%price%", String.format("%.2f", r.getPrice()))
-                        .replace("%player%", p.getName()));
-            }
-
-            r.sell(p.getUniqueId());
+                UUID sellerId = current.getLandlord();
+                String regionName = current.getName() == null ? current.getId() : current.getName();
+                String sellerName = UUIDCache.getNameFromUUID(sellerId);
+                double price = current.getPrice();
+                current.sell(buyerId);
+                SchedulerUtil.sendToPlayer(buyerId, PSL.BUY_SOLD_BUYER.msg()
+                        .replace("%region%", regionName)
+                        .replace("%price%", String.format("%.2f", price))
+                        .replace("%player%", sellerName == null ? "" : sellerName));
+                SchedulerUtil.sendToPlayer(sellerId, PSL.BUY_SOLD_SELLER.msg()
+                        .replace("%region%", regionName)
+                        .replace("%price%", String.format("%.2f", price))
+                        .replace("%player%", buyerName));
+            });
+            return true;
 
         } else if (args[0].equals("sell")) { // selling
 

@@ -22,6 +22,12 @@ import dev.espi.protectionstones.ProtectionStones;
 import dev.espi.protectionstones.utils.LimitUtil;
 import dev.espi.protectionstones.utils.MiscUtil;
 import dev.espi.protectionstones.utils.UUIDCache;
+import dev.espi.protectionstones.utils.SchedulerUtil;
+import dev.espi.protectionstones.utils.WGUtils;
+import com.sk89q.worldguard.protection.managers.RegionManager;
+import com.sk89q.worldguard.protection.regions.ProtectedRegion;
+import org.bukkit.OfflinePlayer;
+import org.bukkit.World;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -171,10 +177,7 @@ public class ArgRent implements PSCommandArg {
                     PSL.msg(p, PSL.RENT_STOPPED.msg());
                     if (tenant != null) {
                         PSL.msg(p, PSL.RENT_EVICTED.msg().replace("%tenant%", UUIDCache.getNameFromUUID(tenant)));
-                        Player tenantPlayer = Bukkit.getPlayer(tenant);
-                        if (tenantPlayer != null && tenantPlayer.isOnline()) {
-                            PSL.msg(p, PSL.RENT_TENANT_STOPPED_TENANT.msg().replace("%region%", r.getName() == null ? r.getId() : r.getName()));
-                        }
+                        SchedulerUtil.sendToPlayer(tenant, PSL.RENT_TENANT_STOPPED_TENANT.msg().replace("%region%", r.getName() == null ? r.getId() : r.getName()));
                     }
                     break;
 
@@ -182,29 +185,45 @@ public class ArgRent implements PSCommandArg {
                     if (r.getRentStage() != PSRegion.RentStage.LOOKING_FOR_TENANT)
                         return PSL.msg(p, PSL.RENT_NOT_RENTING.msg());
 
-                    if (!ProtectionStones.getInstance().getVaultEconomy().has(p, r.getPrice()))
-                        return PSL.msg(p, PSL.NOT_ENOUGH_MONEY.msg().replace("%price%", String.format("%.2f", r.getPrice())));
-
                     if (r.getLandlord().equals(p.getUniqueId()))
                         return PSL.msg(p, PSL.RENT_CANNOT_RENT_OWN_REGION.msg());
 
                     if (LimitUtil.hasPassedOrEqualsRentLimit(p))
                         return PSL.msg(p, PSL.RENT_REACHED_LIMIT.msg());
 
-                    r.rentOut(r.getLandlord(), p.getUniqueId(), r.getRentPeriod(), r.getPrice());
-                    PSL.msg(p, PSL.RENT_RENTING_TENANT.msg()
-                            .replace("%region%", r.getName() == null ? r.getId() : r.getName())
-                            .replace("%price%", String.format("%.2f", r.getPrice()))
-                            .replace("%period%", r.getRentPeriod()));
+                    UUID playerId = p.getUniqueId();
+                    UUID worldId = r.getWorld().getUID();
+                    String regionId = r.getId();
+                    String playerName = p.getName();
+                    SchedulerUtil.executeGlobally(() -> {
+                        World world = WGUtils.getLoadedWorld(worldId);
+                        RegionManager manager = WGUtils.getRegionManagerWithWorld(world);
+                        ProtectedRegion worldGuardRegion = manager == null ? null : manager.getRegion(regionId);
+                        PSRegion current = worldGuardRegion == null ? null : PSRegion.fromWGRegion(world, worldGuardRegion);
+                        if (current == null || current.getRentStage() != PSRegion.RentStage.LOOKING_FOR_TENANT) {
+                            SchedulerUtil.sendToPlayer(playerId, PSL.RENT_NOT_RENTING.msg());
+                            return;
+                        }
 
-                    if (Bukkit.getPlayer(r.getLandlord()) != null) {
-                        PSL.msg(Bukkit.getPlayer(r.getLandlord()), PSL.RENT_RENTING_LANDLORD.msg()
-                                .replace("%player%", p.getName())
-                                .replace("%region%", r.getName() == null ? r.getId() : r.getName()));
-                    }
-                    PSEconomy.doRentPayment(r);
+                        OfflinePlayer tenant = Bukkit.getOfflinePlayer(playerId);
+                        if (!ProtectionStones.getInstance().getVaultEconomy().has(tenant, current.getPrice())) {
+                            SchedulerUtil.sendToPlayer(playerId, PSL.NOT_ENOUGH_MONEY.msg().replace("%price%", String.format("%.2f", current.getPrice())));
+                            return;
+                        }
 
-                    break;
+                        UUID landlord = current.getLandlord();
+                        String regionName = current.getName() == null ? current.getId() : current.getName();
+                        current.rentOut(landlord, playerId, current.getRentPeriod(), current.getPrice());
+                        SchedulerUtil.sendToPlayer(playerId, PSL.RENT_RENTING_TENANT.msg()
+                                .replace("%region%", regionName)
+                                .replace("%price%", String.format("%.2f", current.getPrice()))
+                                .replace("%period%", current.getRentPeriod()));
+                        SchedulerUtil.sendToPlayer(landlord, PSL.RENT_RENTING_LANDLORD.msg()
+                                .replace("%player%", playerName)
+                                .replace("%region%", regionName));
+                        PSEconomy.doRentPayment(current);
+                    });
+                    return true;
 
                 case "stoprenting":
                     if (r.getTenant() == null || !r.getTenant().equals(p.getUniqueId()))
@@ -217,11 +236,9 @@ public class ArgRent implements PSCommandArg {
                     r.setTenant(null);
 
                     PSL.msg(p, PSL.RENT_TENANT_STOPPED_TENANT.msg().replace("%region%", r.getName() == null ? r.getId() : r.getName()));
-                    if (Bukkit.getPlayer(r.getLandlord()) != null) {
-                        PSL.msg(Bukkit.getPlayer(r.getLandlord()), PSL.RENT_TENANT_STOPPED_LANDLORD.msg()
-                                .replace("%player%", p.getName())
-                                .replace("%region%", r.getName() == null ? r.getId() : r.getName()));
-                    }
+                    SchedulerUtil.sendToPlayer(r.getLandlord(), PSL.RENT_TENANT_STOPPED_LANDLORD.msg()
+                            .replace("%player%", p.getName())
+                            .replace("%region%", r.getName() == null ? r.getId() : r.getName()));
                     break;
                 default:
                     runHelp(s);
