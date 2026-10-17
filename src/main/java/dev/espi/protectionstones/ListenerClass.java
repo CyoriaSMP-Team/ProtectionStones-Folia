@@ -596,25 +596,27 @@ public class ListenerClass implements Listener {
                 .replace("%block_y%", region.getProtectBlockLocation().getBlockY() + "")
                 .replace("%block_z%", region.getProtectBlockLocation().getBlockZ() + ""));
 
+        final String expandedAction = act.toString();
+
         switch (sp[0]) {
             case "player_command":
-                if (s != null) SchedulerUtil.executeForSender(s, () -> Bukkit.getServer().dispatchCommand(s, act.toString()));
+                if (s != null) SchedulerUtil.executeForSender(s, () -> Bukkit.getServer().dispatchCommand(s, expandedAction));
                 break;
             case "console_command":
-                SchedulerUtil.executeGlobally(() -> Bukkit.getServer().dispatchCommand(Bukkit.getServer().getConsoleSender(), act.toString()));
+                SchedulerUtil.executeGlobally(() -> Bukkit.getServer().dispatchCommand(Bukkit.getServer().getConsoleSender(), expandedAction));
                 break;
             case "message":
-                if (s != null) SchedulerUtil.sendMessage(s, ChatColor.translateAlternateColorCodes('&', act.toString()));
+                if (s != null) SchedulerUtil.sendMessage(s, ChatColor.translateAlternateColorCodes('&', expandedAction));
                 break;
             case "global_message":
                 SchedulerUtil.executeGlobally(() -> {
-                    String message = ChatColor.translateAlternateColorCodes('&', act.toString());
+                    String message = ChatColor.translateAlternateColorCodes('&', expandedAction);
                     for (Player p : Bukkit.getOnlinePlayers()) SchedulerUtil.executeForEntity(p, () -> p.sendMessage(message));
                     ProtectionStones.getPluginLogger().info(message);
                 });
                 break;
             case "console_message":
-                ProtectionStones.getPluginLogger().info(ChatColor.translateAlternateColorCodes('&', act.toString()));
+                ProtectionStones.getPluginLogger().info(ChatColor.translateAlternateColorCodes('&', expandedAction));
                 break;
         }
     }

@@ -205,8 +205,8 @@ public class ArgRent implements PSCommandArg {
                             return;
                         }
 
-                        OfflinePlayer tenant = Bukkit.getOfflinePlayer(playerId);
-                        if (!ProtectionStones.getInstance().getVaultEconomy().has(tenant, current.getPrice())) {
+                        OfflinePlayer renter = Bukkit.getOfflinePlayer(playerId);
+                        if (!ProtectionStones.getInstance().getVaultEconomy().has(renter, current.getPrice())) {
                             SchedulerUtil.sendToPlayer(playerId, PSL.NOT_ENOUGH_MONEY.msg().replace("%price%", String.format("%.2f", current.getPrice())));
                             return;
                         }
