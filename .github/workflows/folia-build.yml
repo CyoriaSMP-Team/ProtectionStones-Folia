@@ -1,0 +1,39 @@
+name: Folia 1.21.11 Build (development)
+
+on:
+  push:
+    branches: [folia/1.21.11]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: folia-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Compile and test Folia 1.21.11 port
+        env:
+          MAVEN_OPTS: -Xmx2048m -XX:MaxMetaspaceSize=512m
+        run: mvn -B -ntp --no-transfer-progress verify
+      - name: Upload development build (not a Release)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProtectionStones-Folia-development-${{ github.run_number }}
+          path: target/*.jar
+          if-no-files-found: error
+          retention-days: 7
