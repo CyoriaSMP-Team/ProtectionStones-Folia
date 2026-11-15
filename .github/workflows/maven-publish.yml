@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-
+    if: ${{ false }} # Fail closed until this release tag has exact-commit Folia 1.21.11 runtime evidence
     runs-on: ubuntu-latest
     permissions:
       contents: read
