@@ -20,12 +20,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: CyoriaSMP-Team/WorldEdit-Folia
-          ref: 3a69802e37448d52e157d28ed77a04b3076305a1
+          ref: d68fd3254c9cab66c3be48005533dea5022e8c57
           path: deps/worldedit
       - uses: actions/checkout@v4
         with:
           repository: CyoriaSMP-Team/WorldGuard-Folia
-          ref: 15b772984a5ec5050603f5898d54b836a53aa959
+          ref: 40c71725422a86dfbc617880c590ad74698c2afd
           path: deps/worldguard
       - uses: actions/setup-java@v4
         with:
@@ -67,8 +67,8 @@ jobs:
           printf 'online-mode=false\nserver-ip=127.0.0.1\nserver-port=25565\nmax-players=1\nview-distance=2\nsimulation-distance=2\nspawn-protection=0\n' > runtime/server.properties
           {
             echo "protectionstones_commit=$CANDIDATE_SHA"
-            echo "worldedit_commit=3a69802e37448d52e157d28ed77a04b3076305a1"
-            echo "worldguard_commit=15b772984a5ec5050603f5898d54b836a53aa959"
+            echo "worldedit_commit=d68fd3254c9cab66c3be48005533dea5022e8c57"
+            echo "worldguard_commit=40c71725422a86dfbc617880c590ad74698c2afd"
             echo "folia_version=1.21.11"
             echo "folia_build=$BUILD"
             sha256sum runtime/plugins/*.jar
