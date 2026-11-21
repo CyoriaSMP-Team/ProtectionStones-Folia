@@ -56,7 +56,7 @@ jobs:
           mkdir -p runtime/plugins
           curl -fL "$URL" -o runtime/folia.jar
           echo "$SUM  runtime/folia.jar" | sha256sum -c -
-          WE="$(find deps/worldedit/worldedit-bukkit/build/libs -maxdepth 1 -type f -name '*Paper*.jar' ! -name '*sources*' ! -name '*javadoc*' | head -n1)"name 'worldedit-bukkit-*.jar' ! -name '*sources*' ! -name '*javadoc*' | head -n1)"
+          WE="$(find deps/worldedit/worldedit-bukkit/build/libs -maxdepth 1 -type f -name 'worldedit-bukkit-*.jar' ! -name '*sources*' ! -name '*javadoc*' | head -n1)"
           WG="$(find deps/worldguard/worldguard-bukkit/build/libs -maxdepth 1 -type f -name 'worldguard-bukkit-*.jar' ! -name '*sources*' ! -name '*javadoc*' | head -n1)"
           PS="$(find target -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' | head -n1)"
           test -n "$WE" && test -n "$WG" && test -n "$PS"
